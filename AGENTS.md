@@ -230,34 +230,95 @@ Do not claim something works if it was not tested.
 
 ---
 
-## First implementation assignment
+## Уже принятые решения (Phases 0–4)
 
-Start with `Phase 0 — Bootstrap`.
+Не переоткрывать без причины — за каждым стоит проблема, которая уже была поймана.
 
-Do not implement real ML inference yet.
+### Разделение образов
+`backend/Dockerfile` имеет таргеты `runtime` (API, без ML) и `worker` (torch + pyannote).
+API-образ ~604 МБ, worker ~1.93 ГБ. API никогда не импортирует код из `worker/`.
+Следствие: всё, что нужно и API, и воркеру (пути к моделям, схемы), живёт в `app/`.
 
-Deliver:
-- repository skeleton;
-- `.gitignore`;
-- `.env.example`;
-- FastAPI service;
-- Next.js frontend;
-- Redis;
-- RQ worker;
-- `docker-compose.yml`;
-- initial `docker-compose.cuda.yml` placeholder/override structure;
-- service healthchecks;
-- `/api/v1/health`;
-- minimal UI showing backend health;
-- basic tests;
-- exact startup instructions.
+### Только CPU-колёса torch
+`backend/requirements-worker.txt` пинит `torch==2.11.0+cpu`, `torchaudio==2.11.0+cpu`,
+`torchcodec==0.16.0+cpu`. Обычные PyPI-колёса тянут CUDA-библиотеки (~2–3 ГБ) **и на
+amd64, и на arm64**. Суффикс `+cpu` существует только на индексе PyTorch, поэтому
+Dockerfile ставит их с `--index-url https://download.pytorch.org/whl/cpu`.
+Версии обновлять только тройкой: torchcodec 0.16 требует torch >= 2.11, torchaudio 2.11 —
+последний релиз своей линии.
 
-Success condition:
+### SimpleWorker вместо Worker
+`worker/main.py` использует `rq.SimpleWorker` и грузит модели при старте процесса.
+Обычный `Worker` форкает процесс на каждую задачу, и fork после загрузки torch-модели
+приводит к зависанию инференса (наследуется память модели, но не пул потоков OpenMP).
+Модель обязана грузиться один раз на процесс и переиспользоваться между задачами.
+Плата: крах инференса роняет worker, задача остаётся незавершённой (чинится в Phase 8).
 
-```bash
-docker compose up --build
-```
+### Модель диаризации публичная
+`pyannote/speaker-diarization-community-1` скачивается без `HF_TOKEN`. Код всё равно
+поддерживает токен и отдаёт `HF_TOKEN_REQUIRED`, если весов нет и токена нет, — на случай
+gated-моделей в будущем. Токен читается только из env, помечен `repr=False`, никогда не
+логируется и не возвращается через API.
 
-starts all services and the browser can open the local app.
+### Кэш моделей и offline
+Веса лежат в `MODELS_DIR/huggingface-cache/`. Если веса уже на диске, выставляется
+`HF_HUB_OFFLINE=1` — инференс не ходит в сеть. `app/services/model_cache.py` — чистая
+работа с путями, без ML-импортов, чтобы health-эндпоинт мог отвечать из API-образа.
 
-Only after Phase 0 is working should you proceed to Phase 1.
+### Ошибки
+`AppError(ErrorCode, message)` + обработчик в `app/main.py` дают `{error_code, message}`.
+Технические детали (stderr ffmpeg, трейсбеки pyannote) остаются в логах. `process_job`
+различает `AppError` (есть стабильный код) и внутренние сбои (код не выдумывается).
+
+### Redis
+Запущен с `appendonly yes` и volume `redis-data`: без персистентности перезапуск Redis
+терял регистрацию RQ-воркера, и он навсегда переставал считаться живым.
+
+### Тесты
+ML-зависимостей в локальном venv нет — тесты подменяют `pyannote.audio` и `torch`
+фейковыми модулями, а ffmpeg-тесты помечены `skipif` по наличию бинарника (на dev-машине
+ffmpeg есть, и они реально выполняются). Тесты бэкенда должны проходить без torch.
+
+### GigaAM ставится из git, а не с PyPI
+На PyPI последний релиз — `gigaam 0.1.0`: без моделей v3, без word-level таймкодов и с
+пином `torch<=2.5.1`, который конфликтует с нашим `torch==2.11.0+cpu`. Поэтому
+`requirements-worker.txt` тянет пакет с GitHub по конкретному коммиту. `torch` там —
+опциональный extra, поэтому наши `+cpu`-пины не перетираются. `git` ставится и удаляется
+в одном слое Dockerfile, чтобы не остаться в образе.
+
+### ASR-чанки строятся не по speaker-turn
+`worker/pipeline/asr.py` берёт объединение речевых интервалов из `exclusive`-диаризации,
+склеивает паузы короче `MERGE_SILENCE_GAP_MS`, расширяет края на половину этого зазора
+(диаризация обрезает начала слов; половина — максимум, при котором соседние чанки не
+пересекутся) и режет длинные куски на равные части не длиннее `MAX_ASR_CHUNK_SECONDS`.
+Привязка к границам реплик дала бы тысячи коротких фрагментов и просадку качества
+(SPEC.md §3.3). `build_asr_chunks` — чистая функция без ML-импортов, она покрыта тестами
+отдельно от инференса.
+
+### Нарезка аудио — stdlib `wave`, а не ffmpeg на каждый чанк
+`work/normalized.wav` гарантированно PCM s16le / mono / 16 kHz, поэтому чанк вырезается
+точным срезом кадров, а не вызовом ffmpeg. GigaAM `transcribe()` принимает только путь к
+файлу, так что чанк пишется во временный WAV и переиспользует один и тот же файл.
+
+### Word-level таймстемпы обязательны
+`model.transcribe(path, word_timestamps=True)` возвращает слова, локальные для чанка; к ним
+прибавляется `chunk.start`. Если модель вернула непустой текст без таймкодов — это
+`ASR_FAILED`, а не молчаливая деградация: без таймкодов дальше нечего выравнивать.
+
+### Smoke-тесты
+`scripts/smoke-test.{sh,ps1}` поднимают полный цикл задачи на синтетическом тоне. Тон —
+не речь, поэтому `DIARIZATION_FAILED` там считается допустимым исходом; любая другая
+ошибка означает поломку pipeline.
+
+---
+
+## Current assignment
+
+Phases 0–4 готовы (см. `TASKS.md` → Progress). Следующий шаг — `Phase 5 — Alignment`.
+
+Заменить заглушку стадии `ALIGNING` в `backend/worker/jobs.py`: назначить каждому слову
+из `work/asr_words.json` спикера по midpoint и `exclusive`-диаризации с configurable
+tolerance (если надёжно нельзя — `speaker_id = null`, спикера не выдумывать), собрать
+слова в transcript blocks и сохранить канонический `result/transcript.json`.
+
+Не переходить к Phase 6 автоматически.

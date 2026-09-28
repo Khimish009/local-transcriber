@@ -5,7 +5,13 @@ import types
 import pytest
 
 from app.core.errors import AppError, ErrorCode
-from app.services.model_cache import DIARIZATION_MODEL, is_model_cached, repo_cache_dir
+from app.services.model_cache import (
+    DIARIZATION_MODEL,
+    asr_checkpoint_path,
+    is_asr_model_cached,
+    is_model_cached,
+    repo_cache_dir,
+)
 from worker.pipeline import models
 
 TOKEN = "hf_secrettokenvalue"
@@ -179,3 +185,88 @@ def test_token_is_not_shown_in_settings_repr(settings) -> None:
     with_token = settings.model_copy(update={"hf_token": TOKEN})
 
     assert TOKEN not in repr(with_token)
+
+
+# --- GigaAM (T4.1) -----------------------------------------------------------------
+
+
+class FakeAsrModel:
+    calls: list[dict] = []
+    raises: Exception | None = None
+
+    @classmethod
+    def load_model(cls, model_name, **kwargs):
+        cls.calls.append({"model_name": model_name, **kwargs})
+        if cls.raises is not None:
+            raise cls.raises
+        return cls()
+
+
+@pytest.fixture
+def fake_gigaam(monkeypatch, fake_ml):
+    FakeAsrModel.calls = []
+    FakeAsrModel.raises = None
+
+    gigaam = types.ModuleType("gigaam")
+    gigaam.load_model = FakeAsrModel.load_model
+    monkeypatch.setitem(sys.modules, "gigaam", gigaam)
+    return FakeAsrModel
+
+
+def test_asr_cache_detection(settings) -> None:
+    assert is_asr_model_cached(settings) is False
+
+    path = asr_checkpoint_path(settings)
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"ckpt")
+
+    assert is_asr_model_cached(settings) is True
+
+
+def test_asr_short_name_resolves_to_the_v3_checkpoint(settings) -> None:
+    short = settings.model_copy(update={"asr_model": "e2e_rnnt"})
+
+    assert asr_checkpoint_path(short).name == "v3_e2e_rnnt.ckpt"
+
+
+def test_asr_model_uses_the_configured_name_and_download_root(settings, fake_gigaam) -> None:
+    models.load_asr_model(settings)
+
+    call = fake_gigaam.calls[0]
+    assert call["model_name"] == settings.asr_model
+    assert call["download_root"] == str(settings.models_dir / "gigaam")
+    assert call["device"] == "device:cpu"
+
+
+def test_asr_model_name_is_configurable(settings, fake_gigaam) -> None:
+    other = settings.model_copy(update={"asr_model": "v3_rnnt"})
+
+    models.load_asr_model(other)
+
+    assert fake_gigaam.calls[0]["model_name"] == "v3_rnnt"
+
+
+def test_asr_model_is_loaded_once_per_process(settings, fake_gigaam) -> None:
+    first = models.get_asr_model(settings)
+    second = models.get_asr_model(settings)
+
+    assert first is second
+    assert len(fake_gigaam.calls) == 1
+
+
+def test_asr_load_failure_has_a_stable_code(settings, fake_gigaam) -> None:
+    fake_gigaam.raises = RuntimeError("checksum failed")
+
+    with pytest.raises(AppError) as exc:
+        models.load_asr_model(settings)
+
+    assert exc.value.code is ErrorCode.MODEL_NOT_AVAILABLE
+
+
+def test_asr_without_gigaam_installed_is_reported(settings, monkeypatch) -> None:
+    monkeypatch.setitem(sys.modules, "gigaam", None)
+
+    with pytest.raises(AppError) as exc:
+        models.load_asr_model(settings)
+
+    assert exc.value.code is ErrorCode.MODEL_NOT_AVAILABLE

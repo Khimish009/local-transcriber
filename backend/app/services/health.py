@@ -12,7 +12,7 @@ from app.schemas.health import (
     UploadLimits,
     WorkersHealth,
 )
-from app.services.model_cache import DIARIZATION_MODEL, is_model_cached
+from app.services.model_cache import DIARIZATION_MODEL, is_asr_model_cached, is_model_cached
 
 logger = logging.getLogger(__name__)
 
@@ -55,21 +55,30 @@ def check_models(settings: Settings) -> ModelsHealth:
             device=settings.device,
             detail=f"Models directory {settings.models_dir} does not exist",
         )
-    if is_model_cached(settings, DIARIZATION_MODEL):
-        return ModelsHealth(
-            status="ready",
-            asr_model=settings.asr_model,
-            device=settings.device,
-            detail=f"{DIARIZATION_MODEL} is cached locally",
-        )
-    return ModelsHealth(
-        status="missing",
-        asr_model=settings.asr_model,
-        device=settings.device,
-        detail=(
+    missing: list[str] = []
+    if not is_model_cached(settings, DIARIZATION_MODEL):
+        missing.append(
             f"{DIARIZATION_MODEL} is not downloaded yet — set HF_TOKEN and accept the "
             "model terms on Hugging Face"
-        ),
+        )
+    if not is_asr_model_cached(settings):
+        missing.append(
+            f"GigaAM '{settings.asr_model}' is not downloaded yet — it is fetched on the "
+            "first transcription job"
+        )
+
+    if missing:
+        return ModelsHealth(
+            status="missing",
+            asr_model=settings.asr_model,
+            device=settings.device,
+            detail="; ".join(missing),
+        )
+    return ModelsHealth(
+        status="ready",
+        asr_model=settings.asr_model,
+        device=settings.device,
+        detail=f"{DIARIZATION_MODEL} and GigaAM '{settings.asr_model}' are cached locally",
     )
 
 

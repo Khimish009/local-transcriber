@@ -45,9 +45,15 @@ FROM base AS worker-base
 # gigabytes to a build that must stay CPU-only and portable. requirements-worker.txt pins
 # `+cpu` local versions, which resolve only from the PyTorch CPU index; everything else
 # comes from PyPI. See docker-compose.cuda.yml for the GPU story.
-RUN pip install -r requirements-worker.txt \
+# git is only needed to fetch the pinned GigaAM commit, so it is installed and removed
+# inside a single layer instead of staying in the shipped image.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && pip install -r requirements-worker.txt \
         --index-url https://download.pytorch.org/whl/cpu \
-        --extra-index-url https://pypi.org/simple
+        --extra-index-url https://pypi.org/simple \
+    && apt-get purge -y --auto-remove git \
+    && rm -rf /var/lib/apt/lists/*
 
 FROM worker-base AS worker
 

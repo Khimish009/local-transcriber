@@ -11,11 +11,18 @@ from typing import Any
 
 from app.core.config import Settings
 from app.core.errors import AppError, ErrorCode
-from app.services.model_cache import DIARIZATION_MODEL, hf_cache_dir, is_model_cached
+from app.services.model_cache import (
+    DIARIZATION_MODEL,
+    gigaam_dir,
+    hf_cache_dir,
+    is_asr_model_cached,
+    is_model_cached,
+)
 
 logger = logging.getLogger(__name__)
 
 _pipeline_cache: dict[str, Any] = {}
+_asr_cache: dict[str, Any] = {}
 
 
 def _prepare_hf_environment(settings: Settings, cached: bool) -> None:
@@ -120,5 +127,61 @@ def get_diarization_pipeline(settings: Settings, hf_token: str | None) -> Any:
     return _pipeline_cache[DIARIZATION_MODEL]
 
 
+def load_asr_model(settings: Settings) -> Any:
+    """Load GigaAM (TASKS.md T4.1). The model name comes from ASR_MODEL.
+
+    Weights are public — no token is needed. They are downloaded once into
+    MODELS_DIR/gigaam and reused from disk afterwards, so inference stays offline.
+    """
+    try:
+        import gigaam
+    except ImportError as exc:
+        raise AppError(
+            ErrorCode.MODEL_NOT_AVAILABLE, "gigaam is not installed in this image"
+        ) from exc
+
+    device = _resolve_device(settings)
+    download_root = gigaam_dir(settings)
+    download_root.mkdir(parents=True, exist_ok=True)
+    cached = is_asr_model_cached(settings)
+
+    logger.info(
+        "loading ASR model",
+        extra={"stage": "asr", "model": settings.asr_model, "cached": cached},
+    )
+
+    try:
+        model = gigaam.load_model(
+            settings.asr_model,
+            device=device,
+            download_root=str(download_root),
+        )
+    except Exception as exc:
+        logger.error(
+            "could not load ASR model",
+            extra={
+                "stage": "asr",
+                "model": settings.asr_model,
+                "error_type": type(exc).__name__,
+            },
+        )
+        raise AppError(
+            ErrorCode.MODEL_NOT_AVAILABLE,
+            f"Could not load the ASR model '{settings.asr_model}'. Check ASR_MODEL and "
+            "that the weights could be downloaded into MODELS_DIR.",
+        ) from exc
+
+    logger.info("ASR model ready", extra={"stage": "asr", "model": settings.asr_model})
+    return model
+
+
+def get_asr_model(settings: Settings) -> Any:
+    """Process-wide singleton — GigaAM is never reloaded per job or per chunk."""
+    if settings.asr_model not in _asr_cache:
+        _asr_cache[settings.asr_model] = load_asr_model(settings)
+    return _asr_cache[settings.asr_model]
+
+
 def reset_pipeline_cache() -> None:
     _pipeline_cache.clear()
+    _asr_cache.clear()

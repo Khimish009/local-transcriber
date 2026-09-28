@@ -11,10 +11,11 @@ def worker_env(monkeypatch, redis, settings):
     monkeypatch.setattr("worker.jobs.get_settings", lambda: settings)
     monkeypatch.setattr("worker.jobs.prepare_audio", lambda *args, **kwargs: None)
     monkeypatch.setattr("worker.jobs.diarize", lambda *args, **kwargs: None)
+    monkeypatch.setattr("worker.jobs.transcribe", lambda *args, **kwargs: None)
 
 
 def test_stage_progress_stays_inside_the_stage_window() -> None:
-    for stage in (JobStatus.PREPARING_AUDIO, *PLACEHOLDER_STAGES):
+    for stage in (JobStatus.PREPARING_AUDIO, JobStatus.TRANSCRIBING, *PLACEHOLDER_STAGES):
         start, end = STAGE_PROGRESS_RANGE[stage]
         assert stage_progress(stage, 0, 4) == start
         assert stage_progress(stage, 4, 4) == end
@@ -54,7 +55,7 @@ def test_process_job_marks_failure_and_reraises(worker_env, store, monkeypatch) 
     original_update = store.__class__.update
 
     def flaky(self, job_id, **kwargs):
-        if kwargs.get("status") is JobStatus.TRANSCRIBING:
+        if kwargs.get("status") is JobStatus.ALIGNING:
             raise RuntimeError("stage exploded")
         return original_update(self, job_id, **kwargs)
 

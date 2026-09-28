@@ -1,6 +1,18 @@
 from app.core.config import Settings
 from app.services.health import check_models, check_redis, check_workers
-from app.services.model_cache import DIARIZATION_MODEL, repo_cache_dir
+from app.services.model_cache import DIARIZATION_MODEL, asr_checkpoint_path, repo_cache_dir
+
+
+def cache_diarization(settings) -> None:
+    snapshot = repo_cache_dir(settings, DIARIZATION_MODEL) / "snapshots" / "abc"
+    snapshot.mkdir(parents=True)
+    (snapshot / "config.yaml").write_text("fake")
+
+
+def cache_asr(settings) -> None:
+    path = asr_checkpoint_path(settings)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"ckpt")
 
 
 def test_check_redis_ok(redis) -> None:
@@ -34,13 +46,21 @@ def test_check_models_missing_until_weights_are_downloaded(tmp_path) -> None:
 
 
 def test_check_models_ready_when_weights_are_cached(tmp_path) -> None:
-    models_dir = tmp_path / "models"
-    settings = Settings(models_dir=models_dir)
-    snapshot = repo_cache_dir(settings, DIARIZATION_MODEL) / "snapshots" / "abc"
-    snapshot.mkdir(parents=True)
-    (snapshot / "config.yaml").write_text("fake")
+    settings = Settings(models_dir=tmp_path / "models")
+    cache_diarization(settings)
+    cache_asr(settings)
 
     assert check_models(settings).status == "ready"
+
+
+def test_check_models_missing_while_the_asr_model_is_absent(tmp_path) -> None:
+    settings = Settings(models_dir=tmp_path / "models")
+    cache_diarization(settings)
+
+    result = check_models(settings)
+
+    assert result.status == "missing"
+    assert settings.asr_model in result.detail
 
 
 def test_check_models_missing_directory(tmp_path) -> None:

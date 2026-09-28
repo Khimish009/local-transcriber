@@ -19,6 +19,8 @@ def worker_env(monkeypatch, redis, settings, storage):
         storage_.normalized_path(job_id).write_bytes(b"RIFF fake wav")
 
     monkeypatch.setattr("worker.jobs.prepare_audio", fake_prepare)
+    # ASR has its own stage tests; here it must not need a model.
+    monkeypatch.setattr("worker.jobs.transcribe", lambda *args, **kwargs: None)
 
 
 def install_pipeline(monkeypatch, pipeline) -> None:

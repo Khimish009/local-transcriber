@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     asr_model: str = "v3_e2e_rnnt"
     device: str = "cpu"
 
+    # repr=False keeps the token out of tracebacks and log lines that dump settings.
+    hf_token: str | None = Field(default=None, repr=False)
+
     ffmpeg_bin: str = "ffmpeg"
     ffprobe_bin: str = "ffprobe"
 

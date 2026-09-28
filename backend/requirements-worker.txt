@@ -1,0 +1,14 @@
+# ML dependencies — installed only into the worker image, never into the API image.
+#
+# The torch stack is pinned to `+cpu` local versions, which exist ONLY on
+# https://download.pytorch.org/whl/cpu (see backend/Dockerfile). This is what keeps the
+# base compose a portable CPU build: the plain PyPI wheels bundle CUDA libraries
+# (cuDNN alone is ~650 MB) on both amd64 and arm64.
+#
+# Versions must stay mutually compatible: torchcodec 0.16 requires torch >= 2.11, and
+# torchaudio 2.11 is the last release of that line. Bump all three together.
+torch==2.11.0+cpu
+torchaudio==2.11.0+cpu
+torchcodec==0.16.0+cpu
+
+pyannote.audio>=4.0,<5.0

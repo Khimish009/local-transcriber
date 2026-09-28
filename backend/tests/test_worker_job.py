@@ -6,10 +6,11 @@ from worker.jobs import PLACEHOLDER_STAGES, process_job, stage_progress
 
 @pytest.fixture
 def worker_env(monkeypatch, redis, settings):
-    """Isolate the state machine from the real audio stage, which has its own tests."""
+    """Isolate the state machine from the real pipeline stages, which have their own tests."""
     monkeypatch.setattr("worker.jobs.get_redis", lambda: redis)
     monkeypatch.setattr("worker.jobs.get_settings", lambda: settings)
     monkeypatch.setattr("worker.jobs.prepare_audio", lambda *args, **kwargs: None)
+    monkeypatch.setattr("worker.jobs.diarize", lambda *args, **kwargs: None)
 
 
 def test_stage_progress_stays_inside_the_stage_window() -> None:
@@ -53,7 +54,7 @@ def test_process_job_marks_failure_and_reraises(worker_env, store, monkeypatch) 
     original_update = store.__class__.update
 
     def flaky(self, job_id, **kwargs):
-        if kwargs.get("status") is JobStatus.DIARIZING:
+        if kwargs.get("status") is JobStatus.TRANSCRIBING:
             raise RuntimeError("stage exploded")
         return original_update(self, job_id, **kwargs)
 

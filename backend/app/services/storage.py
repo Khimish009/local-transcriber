@@ -70,6 +70,9 @@ class JobStorage:
     def normalized_path(self, job_id: str) -> Path:
         return self.work_dir(job_id) / "normalized.wav"
 
+    def diarization_path(self, job_id: str) -> Path:
+        return self.work_dir(job_id) / "diarization.json"
+
     def source_path(self, job_id: str, extension: str) -> Path:
         return self.source_dir(job_id) / f"original.{extension}"
 

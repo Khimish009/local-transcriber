@@ -21,6 +21,7 @@ def queued_job(store, storage, settings, monkeypatch, redis):
     """A job whose upload is already on disk, as after POST /api/v1/jobs."""
     monkeypatch.setattr("worker.jobs.get_redis", lambda: redis)
     monkeypatch.setattr("worker.jobs.get_settings", lambda: settings)
+    monkeypatch.setattr("worker.jobs.diarize", lambda *args, **kwargs: None)
 
     def _make(source_factory) -> str:
         job = store.create(JobSource(filename="meeting.wav", size_bytes=0))

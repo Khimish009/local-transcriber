@@ -82,20 +82,36 @@ Generate TXT / DOCX / PDF
 
 ---
 
-## Текущий статус: Phase 2 — Audio preprocessing
+## Текущий статус: Phase 3 — Diarization
 
-Работает инфраструктура задач и подготовка аудио. Реального распознавания ещё нет: стадии DIARIZING / TRANSCRIBING / ALIGNING / GENERATING_EXPORTS в worker — заглушки, которые проходят по настоящему state machine.
+Работают загрузка, подготовка аудио и разделение по спикерам. Распознавания речи ещё нет: стадии TRANSCRIBING / ALIGNING / GENERATING_EXPORTS в worker — заглушки, которые проходят по настоящему state machine.
 
 Работает:
 - `docker compose up --build` поднимает `frontend`, `api`, `worker`, `redis`, у всех есть healthchecks;
-- `GET /api/v1/health` — статус API, Redis, worker, моделей и лимитов загрузки;
-- `POST /api/v1/jobs` — потоковая загрузка, валидация формата/размера, безопасное имя, сохранение в `data/jobs/<job_id>/source/`;
-- `GET /api/v1/jobs/{job_id}` и SSE `GET /api/v1/jobs/{job_id}/events` — статус, стадия, прогресс, код ошибки;
-- FFmpeg-стадия: ffprobe снимает метаданные исходника (длительность, формат, кодек, sample rate, каналы), ffmpeg приводит запись к `work/normalized.wav` — WAV / mono / 16 kHz / PCM s16le; оригинал не изменяется;
-- ошибки FFmpeg не проглатываются: пользователь видит `FFMPEG_FAILED`, технический stderr остаётся в логах;
-- UI: drag & drop, выбор количества спикеров, прогресс-бар со стадией, длительность записи, понятные сообщения об ошибках.
+- `GET /api/v1/health` — статус API, Redis, worker, лимитов загрузки и реального наличия весов моделей;
+- `POST /api/v1/jobs`, `GET /api/v1/jobs/{job_id}`, SSE `GET /api/v1/jobs/{job_id}/events`;
+- FFmpeg-стадия: метаданные исходника + `work/normalized.wav` (WAV / mono / 16 kHz / PCM s16le), оригинал не изменяется;
+- диаризация через `pyannote/speaker-diarization-community-1`: обычная и exclusive разметка сохраняются в `work/diarization.json`, спикеры анонимные (`SPEAKER_00`, ...);
+- количество спикеров: auto или точное значение из UI;
+- модель загружается один раз на процесс worker и переиспользуется между задачами;
+- веса лежат в `models/huggingface-cache/` и переживают перезапуск; если веса уже на месте, включается `HF_HUB_OFFLINE=1` и сеть не нужна;
+- `HF_TOKEN` читается только из окружения, не логируется и не возвращается через API; без него задача падает с понятным `HF_TOKEN_REQUIRED`.
 
-Следующий этап — `Phase 3 — Diarization` (см. `TASKS.md`).
+Следующий этап — `Phase 4 — GigaAM ASR` (см. `TASKS.md`).
+
+### Что нужно для диаризации
+
+1. Принять условия модели на https://huggingface.co/pyannote/speaker-diarization-community-1
+2. Создать read-токен в настройках Hugging Face.
+3. Положить его в `.env`:
+
+```dotenv
+HF_TOKEN=hf_...
+```
+
+4. `docker compose up -d worker` — при первой задаче веса скачаются в `models/`. Дальше токен не нужен.
+
+Пока весов нет, `/api/v1/health` показывает `models: missing`, а UI выводит предупреждение.
 
 ### Быстрый старт
 
@@ -138,6 +154,8 @@ npm run typecheck
 - Контейнеры работают от `root`: `/data` и `/models` — это bind mounts (`./data`, `./models`), и фиксированный UID в образе не совпал бы с пользователем хоста на macOS/Windows/Linux одновременно. Приложение локальное, наружу не публикуется.
 - Redis запущен с `appendonly yes` и хранит данные в volume `redis-data`. Это нужно, чтобы состояние job и регистрация RQ-worker переживали перезапуск контейнера.
 - Если Redis всё же потеряет данные, worker перестанет считаться живым до перезапуска: `docker compose restart worker`.
+- Worker использует `SimpleWorker` (RQ без fork) и грузит модели один раз при старте. Обычный `Worker` форкает процесс на каждую задачу, а fork после загрузки torch-модели приводит к зависанию инференса. Плата за это: жёсткий крах внутри инференса роняет worker (его поднимает restart policy), а задача остаётся в незавершённом статусе до перезапуска — автоматическое восстановление таких задач относится к Phase 8.
+- Образы разделены: `api` не содержит torch и pyannote (604 МБ), ML-зависимости стоят только в `worker` (1.93 ГБ). Версии torch зафиксированы как `+cpu` с индекса PyTorch — обычные PyPI-колёса тянут CUDA-библиотеки на обеих архитектурах.
 
 ---
 

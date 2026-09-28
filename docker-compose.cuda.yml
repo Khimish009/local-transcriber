@@ -5,8 +5,10 @@
 # Requirements: NVIDIA driver + NVIDIA Container Toolkit (Linux) or
 # Docker Desktop + WSL2 + NVIDIA driver (Windows).
 #
-# Phase 0 note: no ML runtime is installed yet, so this override only wires GPU access
-# and switches DEVICE to cuda. The CUDA-enabled base image comes with Phase 9 (T9.2).
+# The worker image installs CPU-only torch on amd64. For real GPU inference the image
+# must be rebuilt with CUDA wheels — that is Phase 9 (T9.2). This override already wires
+# GPU device access and switches DEVICE to cuda, and the worker fails loudly if CUDA is
+# requested but unavailable (no silent CPU fallback).
 services:
   worker:
     environment:

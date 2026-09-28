@@ -1,18 +1,40 @@
 """RQ worker entrypoint.
 
-Phase 0: the worker only proves connectivity — it connects to Redis and listens on the
-transcription queue. Pipeline stages arrive in later phases.
+Uses RQ's `SimpleWorker`, which runs jobs in this process instead of forking a child per
+job. That is deliberate: models are loaded once at startup and reused by every job
+(AGENTS.md, "ML integration rules"). Forking after loading a torch model deadlocks — the
+child inherits the model memory but not the OpenMP thread pool backing it.
+
+The trade-off is that a hard crash inside inference takes the worker down; Docker's
+restart policy brings it back.
 """
 
 import logging
 
-from rq import Queue, Worker
+from rq import Queue, SimpleWorker
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
+from app.core.errors import AppError
 from app.core.logging import configure_logging
 from app.core.redis import get_redis
 
 logger = logging.getLogger(__name__)
+
+
+def warm_up_models(settings: Settings) -> None:
+    """Load models before the first job. A failure here is not fatal: the job that needs
+    the model fails with a stable error code, and the worker keeps serving the queue."""
+    from worker.pipeline.models import get_diarization_pipeline
+
+    try:
+        get_diarization_pipeline(settings, settings.hf_token)
+    except AppError as exc:
+        logger.warning(
+            "model warm-up skipped",
+            extra={"stage": "startup", "error_code": exc.code.value, "detail": exc.message},
+        )
+    except Exception:
+        logger.exception("model warm-up failed", extra={"stage": "startup"})
 
 
 def main() -> None:
@@ -26,8 +48,10 @@ def main() -> None:
         extra={"stage": "startup", "queue": settings.queue_name, "device": settings.device},
     )
 
+    warm_up_models(settings)
+
     queue = Queue(settings.queue_name, connection=redis)
-    worker = Worker(
+    worker = SimpleWorker(
         [queue],
         connection=redis,
         default_worker_ttl=settings.worker_heartbeat_seconds,

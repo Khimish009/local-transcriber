@@ -1,7 +1,8 @@
 """Job entrypoint executed by the RQ worker.
 
-Implemented so far: audio preparation (Phase 2). Diarization, ASR, alignment and exports
-are still placeholders that only walk the state machine — they land in Phases 3-6.
+Implemented so far: audio preparation (Phase 2) and speaker diarization (Phase 3).
+ASR, alignment and exports are still placeholders that only walk the state machine —
+they land in Phases 4-6.
 """
 
 import logging
@@ -14,12 +15,13 @@ from app.schemas.job import STAGE_PROGRESS_RANGE, JobStatus
 from app.services.job_store import JobStore
 from app.services.storage import JobStorage
 from worker.pipeline.audio import normalize_audio, probe_audio
+from worker.pipeline.diarization import run_diarization
+from worker.pipeline.models import get_diarization_pipeline
 
 logger = logging.getLogger(__name__)
 
 # Stages that still have no real implementation, in pipeline order (SPEC.md §5).
 PLACEHOLDER_STAGES: tuple[JobStatus, ...] = (
-    JobStatus.DIARIZING,
     JobStatus.TRANSCRIBING,
     JobStatus.ALIGNING,
     JobStatus.GENERATING_EXPORTS,
@@ -53,6 +55,35 @@ def prepare_audio(job_id: str, store: JobStore, storage: JobStorage, settings: S
     store.update(job_id, progress=stage_progress(stage, 2, 2))
 
 
+def diarize(job_id: str, store: JobStore, storage: JobStorage, settings: Settings) -> None:
+    """T3.4/T3.5 — split the recording into anonymous speakers, save work/diarization.json."""
+    stage = JobStatus.DIARIZING
+    store.update(
+        job_id,
+        status=stage,
+        progress=stage_progress(stage, 0, 3),
+        message="Загрузка модели диаризации",
+    )
+
+    # Loaded once per worker process and reused by every later job.
+    pipeline = get_diarization_pipeline(settings, settings.hf_token)
+    store.update(job_id, progress=stage_progress(stage, 1, 3), message="Разделение по спикерам")
+
+    job = store.require(job_id)
+    result = run_diarization(
+        storage.normalized_path(job_id),
+        pipeline,
+        speaker_count=job.speaker_count,
+    )
+
+    storage.diarization_path(job_id).write_text(result.model_dump_json(indent=2), encoding="utf-8")
+    store.update(
+        job_id,
+        progress=stage_progress(stage, 3, 3),
+        message=f"Найдено спикеров: {len(result.speakers)}",
+    )
+
+
 def process_job(job_id: str, stage_seconds: float | None = None) -> None:
     settings = get_settings()
     store = JobStore(get_redis())
@@ -65,6 +96,7 @@ def process_job(job_id: str, stage_seconds: float | None = None) -> None:
 
     try:
         prepare_audio(job_id, store, storage, settings)
+        diarize(job_id, store, storage, settings)
 
         for stage in PLACEHOLDER_STAGES:
             store.update(job_id, status=stage, progress=stage_progress(stage, 0, STAGE_STEPS))

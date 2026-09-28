@@ -48,7 +48,8 @@ services:
   worker:
     build:
       context: ./backend
-      target: runtime
+      # Separate target: torch and pyannote are installed only here, not into the API image.
+      target: worker
     command: ["python", "-m", "worker.main"]
     environment:
       APP_ENV: ${APP_ENV:-local}
@@ -71,7 +72,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 15s
+      # Generous: the worker loads ML models before it starts accepting jobs.
+      start_period: 300s
     restart: unless-stopped
 
   frontend:

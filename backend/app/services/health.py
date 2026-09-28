@@ -12,6 +12,7 @@ from app.schemas.health import (
     UploadLimits,
     WorkersHealth,
 )
+from app.services.model_cache import DIARIZATION_MODEL, is_model_cached
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ def check_workers(redis: Redis, queue_name: str) -> WorkersHealth:
 
 
 def check_models(settings: Settings) -> ModelsHealth:
-    """No ML model is loaded yet (Phases 3-4) — only the persistent directory is verified."""
+    """Report weight availability. The API never loads a model — it only looks at disk."""
     if not settings.models_dir.is_dir():
         return ModelsHealth(
             status="missing",
@@ -54,11 +55,21 @@ def check_models(settings: Settings) -> ModelsHealth:
             device=settings.device,
             detail=f"Models directory {settings.models_dir} does not exist",
         )
+    if is_model_cached(settings, DIARIZATION_MODEL):
+        return ModelsHealth(
+            status="ready",
+            asr_model=settings.asr_model,
+            device=settings.device,
+            detail=f"{DIARIZATION_MODEL} is cached locally",
+        )
     return ModelsHealth(
-        status="not_required",
+        status="missing",
         asr_model=settings.asr_model,
         device=settings.device,
-        detail="ML models are not loaded yet",
+        detail=(
+            f"{DIARIZATION_MODEL} is not downloaded yet — set HF_TOKEN and accept the "
+            "model terms on Hugging Face"
+        ),
     )
 
 

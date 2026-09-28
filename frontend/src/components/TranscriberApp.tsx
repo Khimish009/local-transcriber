@@ -18,13 +18,22 @@ export function TranscriberApp() {
       }
     : null;
 
-  const workersDown = health.data?.workers.status !== "ok" && health.data !== null;
+  const workersDown = health.data !== null && health.data.workers.status !== "ok";
+  const modelsMissing = health.data !== null && health.data.models.status === "missing";
 
   return (
     <>
       {workersDown && (
         <p className="warning" role="status">
           Worker недоступен — задачи будут стоять в очереди.
+        </p>
+      )}
+
+      {modelsMissing && (
+        <p className="warning" role="status">
+          Модель диаризации ещё не скачана. Укажите <code>HF_TOKEN</code> в <code>.env</code> и
+          примите условия модели на Hugging Face — иначе задача остановится на этапе разделения по
+          спикерам.
         </p>
       )}
 

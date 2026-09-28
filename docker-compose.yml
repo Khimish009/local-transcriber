@@ -1,0 +1,96 @@
+services:
+  redis:
+    image: redis:7-alpine
+    # AOF on: job state and worker registry must survive a container restart.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./backend
+      target: runtime
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      DATA_DIR: ${DATA_DIR:-/data}
+      MODELS_DIR: ${MODELS_DIR:-/models}
+      ASR_MODEL: ${ASR_MODEL:-v3_e2e_rnnt}
+      DEVICE: ${DEVICE:-cpu}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-2048}
+      MAX_ASR_CHUNK_SECONDS: ${MAX_ASR_CHUNK_SECONDS:-20}
+      MERGE_SILENCE_GAP_MS: ${MERGE_SILENCE_GAP_MS:-400}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+    volumes:
+      - ./data:/data
+      - ./models:/models
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "/srv/healthcheck.py"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ./backend
+      target: runtime
+    command: ["python", "-m", "worker.main"]
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      DATA_DIR: ${DATA_DIR:-/data}
+      MODELS_DIR: ${MODELS_DIR:-/models}
+      ASR_MODEL: ${ASR_MODEL:-v3_e2e_rnnt}
+      DEVICE: ${DEVICE:-cpu}
+      MAX_ASR_CHUNK_SECONDS: ${MAX_ASR_CHUNK_SECONDS:-20}
+      MERGE_SILENCE_GAP_MS: ${MERGE_SILENCE_GAP_MS:-400}
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes:
+      - ./data:/data
+      - ./models:/models
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "worker.healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      target: runtime
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+volumes:
+  redis-data:

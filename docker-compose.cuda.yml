@@ -1,0 +1,22 @@
+# NVIDIA override. Base compose stays CPU-only and authoritative.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.cuda.yml up --build
+#
+# Requirements: NVIDIA driver + NVIDIA Container Toolkit (Linux) or
+# Docker Desktop + WSL2 + NVIDIA driver (Windows).
+#
+# Phase 0 note: no ML runtime is installed yet, so this override only wires GPU access
+# and switches DEVICE to cuda. The CUDA-enabled base image comes with Phase 9 (T9.2).
+services:
+  worker:
+    environment:
+      DEVICE: ${DEVICE:-cuda}
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

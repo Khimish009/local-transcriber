@@ -82,6 +82,63 @@ Generate TXT / DOCX / PDF
 
 ---
 
+## Текущий статус: Phase 0 — Bootstrap
+
+Реализован только каркас системы. ML-моделей, upload и экспорта пока нет.
+
+Работает:
+- `docker compose up --build` поднимает `frontend`, `api`, `worker`, `redis`;
+- `GET /api/v1/health` показывает статус API, Redis, worker и моделей;
+- страница `http://localhost:3000` отображает этот статус и обновляет его каждые 10 секунд;
+- у всех четырёх сервисов есть healthchecks;
+- backend-тесты (`pytest`) покрывают health-схему, health-сервис и конфигурацию.
+
+Следующий этап — `Phase 1 — Job infrastructure` (см. `TASKS.md`).
+
+### Быстрый старт
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+Проверка запущенной системы:
+
+```bash
+./scripts/smoke-test.sh          # macOS / Linux
+pwsh scripts/smoke-test.ps1      # Windows
+```
+
+### Локальная разработка без Docker
+
+Backend:
+
+```bash
+cd backend
+python3.11 -m venv .venv
+.venv/bin/pip install -r requirements.txt -r requirements-dev.txt
+PYTHONPATH=. .venv/bin/python -m pytest      # тесты
+.venv/bin/ruff check . && .venv/bin/ruff format --check .
+REDIS_URL=redis://localhost:6379/0 PYTHONPATH=. .venv/bin/uvicorn app.main:app --reload
+```
+
+Frontend:
+
+```bash
+cd frontend
+npm install
+npm run dev        # http://localhost:3000
+npm run typecheck
+```
+
+### Замечания по эксплуатации
+
+- Контейнеры работают от `root`: `/data` и `/models` — это bind mounts (`./data`, `./models`), и фиксированный UID в образе не совпал бы с пользователем хоста на macOS/Windows/Linux одновременно. Приложение локальное, наружу не публикуется.
+- Redis запущен с `appendonly yes` и хранит данные в volume `redis-data`. Это нужно, чтобы состояние job и регистрация RQ-worker переживали перезапуск контейнера.
+- Если Redis всё же потеряет данные, worker перестанет считаться живым до перезапуска: `docker compose restart worker`.
+
+---
+
 ## Перенос на другой компьютер
 
 Проект должен быть спроектирован так, чтобы код и Docker-конфигурация хранились в GitHub, а модели и пользовательские записи — нет.

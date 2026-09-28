@@ -1,8 +1,8 @@
 """Job entrypoint executed by the RQ worker.
 
-Implemented so far: audio preparation (Phase 2), speaker diarization (Phase 3), GigaAM
-speech recognition (Phase 4) and alignment into the canonical transcript (Phase 5). Export
-generation is still a placeholder that only walks the state machine — it lands in Phase 6.
+The pipeline is complete end to end: audio preparation (Phase 2), speaker diarization
+(Phase 3), GigaAM speech recognition (Phase 4), alignment into the canonical transcript
+(Phase 5) and the TXT/DOCX/PDF exports generated from it (Phase 6).
 """
 
 import logging
@@ -14,6 +14,7 @@ from app.core.redis import get_redis
 from app.schemas.asr import AsrResult
 from app.schemas.diarization import DiarizationResult
 from app.schemas.job import STAGE_PROGRESS_RANGE, JobStatus
+from app.services.exports import regenerate_exports
 from app.services.job_store import JobStore
 from app.services.storage import JobStorage
 from worker.pipeline.alignment import build_transcript
@@ -24,10 +25,14 @@ from worker.pipeline.models import get_asr_model, get_diarization_pipeline
 
 logger = logging.getLogger(__name__)
 
-# Stages that still have no real implementation, in pipeline order (SPEC.md §5).
-PLACEHOLDER_STAGES: tuple[JobStatus, ...] = (JobStatus.GENERATING_EXPORTS,)
-STAGE_STEPS = 4
-DEFAULT_STAGE_SECONDS = 1.5
+# Every stage of SPEC.md §5 now has a real implementation — no placeholder walk is left.
+PROCESSING_STAGES: tuple[JobStatus, ...] = (
+    JobStatus.PREPARING_AUDIO,
+    JobStatus.DIARIZING,
+    JobStatus.TRANSCRIBING,
+    JobStatus.ALIGNING,
+    JobStatus.GENERATING_EXPORTS,
+)
 
 # Share of the TRANSCRIBING window spent loading the model before the first chunk runs.
 ASR_MODEL_LOAD_SHARE = 0.03
@@ -196,11 +201,35 @@ def align(job_id: str, store: JobStore, storage: JobStorage, settings: Settings)
     )
 
 
-def process_job(job_id: str, stage_seconds: float | None = None) -> None:
+def generate_exports(job_id: str, store: JobStore, storage: JobStorage, settings: Settings) -> None:
+    """T6.1-T6.4 — write TXT/DOCX/PDF next to the canonical transcript.json."""
+    stage = JobStatus.GENERATING_EXPORTS
+    store.update(
+        job_id,
+        status=stage,
+        progress=stage_progress(stage, 0, 1),
+        message="Генерация TXT, DOCX и PDF",
+    )
+
+    # Reads the canonical JSON back from disk on purpose: exports are a view of that file
+    # and of nothing else, exactly as a later speaker rename will regenerate them.
+    written = regenerate_exports(
+        storage.transcript_path(job_id),
+        storage.result_dir(job_id),
+        settings.pdf_font_path,
+    )
+
+    store.update(
+        job_id,
+        progress=stage_progress(stage, 1, 1),
+        message=f"Форматы готовы: {', '.join(path.suffix.lstrip('.').upper() for path in written)}",
+    )
+
+
+def process_job(job_id: str) -> None:
     settings = get_settings()
     store = JobStore(get_redis())
     storage = JobStorage(settings.data_dir)
-    delay = DEFAULT_STAGE_SECONDS if stage_seconds is None else stage_seconds
 
     store.require(job_id)
     logger.info("job started", extra={"job_id": job_id, "device": settings.device})
@@ -211,19 +240,13 @@ def process_job(job_id: str, stage_seconds: float | None = None) -> None:
         diarize(job_id, store, storage, settings)
         transcribe(job_id, store, storage, settings)
         align(job_id, store, storage, settings)
-
-        for stage in PLACEHOLDER_STAGES:
-            store.update(job_id, status=stage, progress=stage_progress(stage, 0, STAGE_STEPS))
-            for step in range(1, STAGE_STEPS + 1):
-                if delay:
-                    time.sleep(delay / STAGE_STEPS)
-                store.update(job_id, progress=stage_progress(stage, step, STAGE_STEPS))
+        generate_exports(job_id, store, storage, settings)
 
         store.update(
             job_id,
             status=JobStatus.COMPLETED,
             progress=100,
-            message="Транскрипт готов, экспорт в TXT/DOCX/PDF ещё не реализован",
+            message="Транскрипт готов",
         )
     except AppError as exc:
         # Expected pipeline failure with a stable error code (SPEC.md §12).

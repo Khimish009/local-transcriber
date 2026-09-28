@@ -35,6 +35,7 @@ def worker_env(monkeypatch, redis, settings, storage):
         storage_.diarization_path(job_id).write_text(result.model_dump_json(), encoding="utf-8")
 
     monkeypatch.setattr("worker.jobs.diarize", fake_diarize)
+    monkeypatch.setattr("worker.jobs.generate_exports", lambda *args, **kwargs: None)
 
 
 def install_model(monkeypatch, model) -> None:
@@ -53,7 +54,7 @@ def test_stage_writes_asr_words_json(worker_env, store, storage, monkeypatch) ->
     install_model(monkeypatch, FakeAsrModel())
     job_id = make_job(store)
 
-    process_job(job_id, stage_seconds=0)
+    process_job(job_id)
 
     payload = json.loads(storage.asr_words_path(job_id).read_text(encoding="utf-8"))
     assert payload["engine"] == "gigaam"
@@ -66,7 +67,7 @@ def test_words_are_on_the_global_timeline(worker_env, store, storage, monkeypatc
     install_model(monkeypatch, FakeAsrModel())
     job_id = make_job(store)
 
-    process_job(job_id, stage_seconds=0)
+    process_job(job_id)
 
     payload = json.loads(storage.asr_words_path(job_id).read_text(encoding="utf-8"))
     starts = [word["start"] for word in payload["words"]]
@@ -81,7 +82,7 @@ def test_short_pause_does_not_split_a_chunk(worker_env, store, storage, monkeypa
     install_model(monkeypatch, FakeAsrModel())
     job_id = make_job(store)
 
-    process_job(job_id, stage_seconds=0)
+    process_job(job_id)
 
     payload = json.loads(storage.asr_words_path(job_id).read_text(encoding="utf-8"))
     # 1.0-12.0 and 12.2-18.0 merge (0.2 s gap) into one 17.2 s region, capped at 20 s.
@@ -103,7 +104,7 @@ def test_progress_grows_inside_the_transcribing_window(worker_env, store, monkey
 
     monkeypatch.setattr(store.__class__, "update", record)
 
-    process_job(job_id, stage_seconds=0)
+    process_job(job_id)
 
     assert seen[0] == start
     assert seen[-1] == end
@@ -116,7 +117,7 @@ def test_asr_failure_marks_the_job(worker_env, store, monkeypatch) -> None:
     job_id = make_job(store)
 
     with pytest.raises(AppError):
-        process_job(job_id, stage_seconds=0)
+        process_job(job_id)
 
     job = store.get(job_id)
     assert job.status is JobStatus.FAILED
@@ -132,7 +133,7 @@ def test_model_load_failure_marks_the_job(worker_env, store, monkeypatch) -> Non
     job_id = make_job(store)
 
     with pytest.raises(AppError):
-        process_job(job_id, stage_seconds=0)
+        process_job(job_id)
 
     assert store.get(job_id).error_code is ErrorCode.MODEL_NOT_AVAILABLE
 

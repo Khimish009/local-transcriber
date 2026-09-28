@@ -45,6 +45,7 @@ def worker_env(monkeypatch, redis, settings, storage):
         write_artifacts(storage_, job_id)
 
     monkeypatch.setattr("worker.jobs.transcribe", fake_transcribe)
+    monkeypatch.setattr("worker.jobs.generate_exports", lambda *args, **kwargs: None)
 
 
 def make_job(store, filename="meeting.m4a") -> str:
@@ -62,7 +63,7 @@ def read_transcript(storage, job_id) -> dict:
 def test_stage_writes_canonical_transcript(worker_env, store, storage) -> None:
     job_id = make_job(store)
 
-    process_job(job_id, stage_seconds=0)
+    process_job(job_id)
 
     payload = read_transcript(storage, job_id)
     assert payload["version"] == 1
@@ -81,7 +82,7 @@ def test_stage_writes_canonical_transcript(worker_env, store, storage) -> None:
 def test_transcript_lands_in_the_result_directory(worker_env, store, storage) -> None:
     job_id = make_job(store)
 
-    process_job(job_id, stage_seconds=0)
+    process_job(job_id)
 
     path = storage.transcript_path(job_id)
     assert path.parent == storage.result_dir(job_id)
@@ -91,7 +92,7 @@ def test_transcript_lands_in_the_result_directory(worker_env, store, storage) ->
 def test_words_and_segments_carry_speakers(worker_env, store, storage) -> None:
     job_id = make_job(store)
 
-    process_job(job_id, stage_seconds=0)
+    process_job(job_id)
 
     payload = read_transcript(storage, job_id)
     assert [word["speaker_id"] for word in payload["words"]] == [
@@ -107,7 +108,7 @@ def test_intermediate_artifacts_are_kept(worker_env, store, storage) -> None:
     """Debugging must not require rerunning expensive inference (AGENTS.md)."""
     job_id = make_job(store)
 
-    process_job(job_id, stage_seconds=0)
+    process_job(job_id)
 
     assert storage.diarization_path(job_id).is_file()
     assert storage.asr_words_path(job_id).is_file()
@@ -157,7 +158,7 @@ def test_progress_stays_inside_the_aligning_window(worker_env, store, monkeypatc
 
     monkeypatch.setattr(store.__class__, "update", record)
 
-    process_job(job_id, stage_seconds=0)
+    process_job(job_id)
 
     assert seen[0] == start
     assert seen[-1] == end
@@ -190,7 +191,7 @@ def test_transcript_round_trips_through_the_schema(worker_env, store, storage) -
     from app.schemas.transcript import Transcript
 
     job_id = make_job(store)
-    process_job(job_id, stage_seconds=0)
+    process_job(job_id)
 
     reloaded = Transcript.model_validate_json(
         storage.transcript_path(job_id).read_text(encoding="utf-8")

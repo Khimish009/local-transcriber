@@ -24,6 +24,7 @@ def queued_job(store, storage, settings, monkeypatch, redis):
     monkeypatch.setattr("worker.jobs.diarize", lambda *args, **kwargs: None)
     monkeypatch.setattr("worker.jobs.transcribe", lambda *args, **kwargs: None)
     monkeypatch.setattr("worker.jobs.align", lambda *args, **kwargs: None)
+    monkeypatch.setattr("worker.jobs.generate_exports", lambda *args, **kwargs: None)
 
     def _make(source_factory) -> str:
         job = store.create(JobSource(filename="meeting.wav", size_bytes=0))
@@ -38,7 +39,7 @@ def queued_job(store, storage, settings, monkeypatch, redis):
 def test_preparing_audio_writes_normalized_wav_and_metadata(queued_job, store, storage) -> None:
     job_id = queued_job(lambda path: write_wav(path, seconds=1.0, rate=44100, channels=2))
 
-    process_job(job_id, stage_seconds=0)
+    process_job(job_id)
 
     normalized = storage.normalized_path(job_id)
     with wave.open(str(normalized), "rb") as produced:
@@ -59,7 +60,7 @@ def test_source_recording_is_left_untouched(queued_job, store, storage) -> None:
     source = storage.find_source(job_id)
     before = source.read_bytes()
 
-    process_job(job_id, stage_seconds=0)
+    process_job(job_id)
 
     assert source.read_bytes() == before
 
@@ -69,7 +70,7 @@ def test_corrupted_audio_fails_the_job_with_ffmpeg_code(queued_job, store) -> No
     job_id = queued_job(lambda path: Path(path).write_bytes(b"RIFF" + b"\x00" * 64))
 
     with pytest.raises(AppError):
-        process_job(job_id, stage_seconds=0)
+        process_job(job_id)
 
     job = store.get(job_id)
     assert job.status is JobStatus.FAILED
@@ -83,7 +84,7 @@ def test_missing_source_fails_the_job(store, storage, settings, monkeypatch, red
     job = store.create(JobSource(filename="meeting.wav", size_bytes=0))
 
     with pytest.raises(AppError):
-        process_job(job.job_id, stage_seconds=0)
+        process_job(job.job_id)
 
     failed = store.get(job.job_id)
     assert failed.status is JobStatus.FAILED

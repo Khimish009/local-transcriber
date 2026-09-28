@@ -34,6 +34,17 @@ def test_alignment_thresholds_come_from_env(monkeypatch) -> None:
     assert settings.max_block_seconds == 25.0
 
 
+def test_empty_pdf_font_path_means_autodetect(monkeypatch) -> None:
+    """compose passes `PDF_FONT_PATH: ${PDF_FONT_PATH:-}`; "" must not become Path(".")."""
+    monkeypatch.setenv("PDF_FONT_PATH", "")
+
+    assert Settings().pdf_font_path is None
+
+    monkeypatch.setenv("PDF_FONT_PATH", "/fonts/MyFont.ttf")
+
+    assert Settings().pdf_font_path == Path("/fonts/MyFont.ttf")
+
+
 def test_cors_origins_from_env_not_parsed_as_json(monkeypatch) -> None:
     monkeypatch.setenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001")
 

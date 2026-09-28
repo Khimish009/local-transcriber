@@ -6,8 +6,11 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
 # ffmpeg is required by the audio pipeline and by the worker at runtime.
+# fonts-dejavu-core gives the PDF export a Cyrillic-capable TTF: the fonts built into PDF
+# are Latin-only, so without it a Russian transcript renders as empty boxes. It is in the
+# shared base because the API image regenerates exports after a speaker rename.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg \
+    && apt-get install -y --no-install-recommends ffmpeg fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /srv

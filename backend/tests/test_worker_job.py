@@ -1,7 +1,26 @@
 import pytest
 
 from app.schemas.job import STAGE_PROGRESS_RANGE, JobSource, JobStatus
-from worker.jobs import PLACEHOLDER_STAGES, process_job, stage_progress
+from worker.jobs import PROCESSING_STAGES, process_job, stage_progress
+
+STAGE_FUNCTIONS = {
+    JobStatus.PREPARING_AUDIO: "prepare_audio",
+    JobStatus.DIARIZING: "diarize",
+    JobStatus.TRANSCRIBING: "transcribe",
+    JobStatus.ALIGNING: "align",
+    JobStatus.GENERATING_EXPORTS: "generate_exports",
+}
+
+
+def stage_stub(status: JobStatus):
+    """Walks the stage's progress window without doing any of its real work."""
+
+    def run(job_id, store, storage, settings):
+        start, end = STAGE_PROGRESS_RANGE[status]
+        store.update(job_id, status=status, progress=start)
+        store.update(job_id, progress=end)
+
+    return run
 
 
 @pytest.fixture
@@ -9,15 +28,16 @@ def worker_env(monkeypatch, redis, settings):
     """Isolate the state machine from the real pipeline stages, which have their own tests."""
     monkeypatch.setattr("worker.jobs.get_redis", lambda: redis)
     monkeypatch.setattr("worker.jobs.get_settings", lambda: settings)
-    monkeypatch.setattr("worker.jobs.prepare_audio", lambda *args, **kwargs: None)
-    monkeypatch.setattr("worker.jobs.diarize", lambda *args, **kwargs: None)
-    monkeypatch.setattr("worker.jobs.transcribe", lambda *args, **kwargs: None)
-    monkeypatch.setattr("worker.jobs.align", lambda *args, **kwargs: None)
+    for status, name in STAGE_FUNCTIONS.items():
+        monkeypatch.setattr(f"worker.jobs.{name}", stage_stub(status))
+
+
+def test_every_pipeline_stage_has_an_implementation() -> None:
+    assert set(PROCESSING_STAGES) == set(STAGE_FUNCTIONS)
 
 
 def test_stage_progress_stays_inside_the_stage_window() -> None:
-    real_stages = (JobStatus.PREPARING_AUDIO, JobStatus.TRANSCRIBING, JobStatus.ALIGNING)
-    for stage in (*real_stages, *PLACEHOLDER_STAGES):
+    for stage in PROCESSING_STAGES:
         start, end = STAGE_PROGRESS_RANGE[stage]
         assert stage_progress(stage, 0, 4) == start
         assert stage_progress(stage, 4, 4) == end
@@ -36,12 +56,15 @@ def test_process_job_walks_the_state_machine(worker_env, store, monkeypatch) -> 
 
     monkeypatch.setattr(store.__class__, "update", record)
 
-    process_job(job.job_id, stage_seconds=0)
+    process_job(job.job_id)
 
     statuses = [status for status, _ in seen]
     assert statuses[-1] == JobStatus.COMPLETED.value
-    for stage in PLACEHOLDER_STAGES:
+    for stage in PROCESSING_STAGES:
         assert stage.value in statuses
+    assert statuses.index(JobStatus.GENERATING_EXPORTS.value) > statuses.index(
+        JobStatus.ALIGNING.value
+    ), "exports are generated from the transcript, so they come last"
 
     progress = [value for _, value in seen]
     assert progress == sorted(progress), "progress must never go backwards"
@@ -64,7 +87,7 @@ def test_process_job_marks_failure_and_reraises(worker_env, store, monkeypatch) 
     monkeypatch.setattr(store.__class__, "update", flaky)
 
     with pytest.raises(RuntimeError):
-        process_job(job.job_id, stage_seconds=0)
+        process_job(job.job_id)
 
     final = store.get(job.job_id)
     assert final.status is JobStatus.FAILED

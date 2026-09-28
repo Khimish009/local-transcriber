@@ -22,6 +22,7 @@ def worker_env(monkeypatch, redis, settings, storage):
     # ASR has its own stage tests; here it must not need a model.
     monkeypatch.setattr("worker.jobs.transcribe", lambda *args, **kwargs: None)
     monkeypatch.setattr("worker.jobs.align", lambda *args, **kwargs: None)
+    monkeypatch.setattr("worker.jobs.generate_exports", lambda *args, **kwargs: None)
 
 
 def install_pipeline(monkeypatch, pipeline) -> None:
@@ -39,7 +40,7 @@ def test_stage_writes_diarization_json(worker_env, store, storage, monkeypatch) 
     )
     job_id = make_job(store)
 
-    process_job(job_id, stage_seconds=0)
+    process_job(job_id)
 
     payload = json.loads(storage.diarization_path(job_id).read_text(encoding="utf-8"))
     assert payload["speakers"] == ["SPEAKER_00", "SPEAKER_01"]
@@ -52,7 +53,7 @@ def test_exact_speaker_count_reaches_the_pipeline(worker_env, store, monkeypatch
     pipeline = FakePipeline(FakeOutput(FakeAnnotation(REGULAR), FakeAnnotation(EXCLUSIVE)))
     install_pipeline(monkeypatch, pipeline)
 
-    process_job(make_job(store, speaker_count=2), stage_seconds=0)
+    process_job(make_job(store, speaker_count=2))
 
     assert pipeline.calls[0]["num_speakers"] == 2
 
@@ -65,7 +66,7 @@ def test_missing_hf_token_fails_the_job(worker_env, store, monkeypatch) -> None:
     job_id = make_job(store)
 
     with pytest.raises(AppError):
-        process_job(job_id, stage_seconds=0)
+        process_job(job_id)
 
     job = store.get(job_id)
     assert job.status is JobStatus.FAILED
@@ -78,6 +79,6 @@ def test_diarization_failure_marks_the_job(worker_env, store, monkeypatch) -> No
     job_id = make_job(store)
 
     with pytest.raises(AppError):
-        process_job(job_id, stage_seconds=0)
+        process_job(job_id)
 
     assert store.get(job_id).error_code is ErrorCode.DIARIZATION_FAILED

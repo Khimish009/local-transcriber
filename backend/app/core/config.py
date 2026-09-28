@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     # Hard cap on a block, so a long monologue never becomes one giant paragraph.
     max_block_seconds: float = 40.0
 
+    # TTF used for the PDF export. None means "discover a Cyrillic-capable font"
+    # (app/services/exports.py) — the images ship DejaVu Sans.
+    pdf_font_path: Path | None = None
+
     # NoDecode: comma-separated list, not JSON. Extensions are stored without the dot.
     allowed_extensions: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["wav", "mp3", "m4a", "mp4", "webm", "ogg"]
@@ -65,6 +69,15 @@ class Settings(BaseSettings):
     @property
     def max_upload_bytes(self) -> int:
         return self.max_upload_mb * 1024 * 1024
+
+    @field_validator("pdf_font_path", mode="before")
+    @classmethod
+    def _empty_path_is_unset(cls, value: object) -> object:
+        # docker-compose passes `PDF_FONT_PATH: ${PDF_FONT_PATH:-}`, and an empty string
+        # would otherwise become Path("."), i.e. a font path that can never be opened.
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @field_validator("cors_origins", mode="before")
     @classmethod

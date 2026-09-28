@@ -1,7 +1,7 @@
 "use client";
 
 import { useJob } from "@/hooks/useJob";
-import { describeError, formatBytes, STAGE_LABELS } from "@/lib/jobs";
+import { describeError, formatBytes, formatDuration, STAGE_LABELS } from "@/lib/jobs";
 
 interface Props {
   jobId: string;
@@ -47,8 +47,15 @@ export function JobProgress({ jobId, onReset }: Props) {
       </header>
 
       <p className="muted">
-        {formatBytes(job.source.size_bytes)} ·{" "}
-        {job.speaker_count ? `${job.speaker_count} спикера(ов)` : "спикеры определяются автоматически"}
+        {[
+          formatBytes(job.source.size_bytes),
+          job.audio ? `длительность ${formatDuration(job.audio.duration_seconds)}` : null,
+          job.speaker_count
+            ? `${job.speaker_count} спикера(ов)`
+            : "спикеры определяются автоматически",
+        ]
+          .filter(Boolean)
+          .join(" · ")}
       </p>
 
       <div className="progress" role="progressbar" aria-valuenow={job.progress} aria-valuemin={0} aria-valuemax={100}>

@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     asr_model: str = "v3_e2e_rnnt"
     device: str = "cpu"
 
+    ffmpeg_bin: str = "ffmpeg"
+    ffprobe_bin: str = "ffprobe"
+
     max_upload_mb: int = 2048
     max_asr_chunk_seconds: int = 20
     merge_silence_gap_ms: int = 400

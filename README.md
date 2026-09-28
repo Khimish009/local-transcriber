@@ -82,19 +82,20 @@ Generate TXT / DOCX / PDF
 
 ---
 
-## Текущий статус: Phase 1 — Job infrastructure
+## Текущий статус: Phase 2 — Audio preprocessing
 
-Работает инфраструктура задач без ML: файл загружается, задача уходит в очередь, прогресс виден в UI. Реального распознавания ещё нет — pipeline в worker пока заглушка, которая проходит по настоящему state machine.
+Работает инфраструктура задач и подготовка аудио. Реального распознавания ещё нет: стадии DIARIZING / TRANSCRIBING / ALIGNING / GENERATING_EXPORTS в worker — заглушки, которые проходят по настоящему state machine.
 
 Работает:
 - `docker compose up --build` поднимает `frontend`, `api`, `worker`, `redis`, у всех есть healthchecks;
 - `GET /api/v1/health` — статус API, Redis, worker, моделей и лимитов загрузки;
-- `POST /api/v1/jobs` — потоковая загрузка файла, валидация формата/размера, безопасное имя, сохранение в `data/jobs/<job_id>/source/`;
-- `GET /api/v1/jobs/{job_id}` — статус, стадия, прогресс, код ошибки;
-- `GET /api/v1/jobs/{job_id}/events` — SSE с обновлениями прогресса (в UI есть fallback на polling);
-- UI: drag & drop, выбор количества спикеров, прогресс-бар с названием стадии, понятные сообщения об ошибках.
+- `POST /api/v1/jobs` — потоковая загрузка, валидация формата/размера, безопасное имя, сохранение в `data/jobs/<job_id>/source/`;
+- `GET /api/v1/jobs/{job_id}` и SSE `GET /api/v1/jobs/{job_id}/events` — статус, стадия, прогресс, код ошибки;
+- FFmpeg-стадия: ffprobe снимает метаданные исходника (длительность, формат, кодек, sample rate, каналы), ffmpeg приводит запись к `work/normalized.wav` — WAV / mono / 16 kHz / PCM s16le; оригинал не изменяется;
+- ошибки FFmpeg не проглатываются: пользователь видит `FFMPEG_FAILED`, технический stderr остаётся в логах;
+- UI: drag & drop, выбор количества спикеров, прогресс-бар со стадией, длительность записи, понятные сообщения об ошибках.
 
-Следующий этап — `Phase 2 — Audio preprocessing` (см. `TASKS.md`).
+Следующий этап — `Phase 3 — Diarization` (см. `TASKS.md`).
 
 ### Быстрый старт
 

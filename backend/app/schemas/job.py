@@ -4,6 +4,7 @@ from enum import StrEnum
 from pydantic import BaseModel, Field
 
 from app.core.errors import ErrorCode
+from app.schemas.audio import AudioMetadata
 
 
 class JobStatus(StrEnum):
@@ -49,6 +50,8 @@ class Job(BaseModel):
     message: str | None = None
     error_code: ErrorCode | None = None
     source: JobSource
+    # Filled in by the audio preparation stage; None until the job reaches it.
+    audio: AudioMetadata | None = None
     speaker_count: int | None = None
     created_at: datetime
     updated_at: datetime

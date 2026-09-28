@@ -67,6 +67,9 @@ class JobStorage:
         ):
             directory.mkdir(parents=True, exist_ok=True)
 
+    def normalized_path(self, job_id: str) -> Path:
+        return self.work_dir(job_id) / "normalized.wav"
+
     def source_path(self, job_id: str, extension: str) -> Path:
         return self.source_dir(job_id) / f"original.{extension}"
 

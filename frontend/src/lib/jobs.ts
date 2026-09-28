@@ -30,6 +30,14 @@ export interface JobSource {
   content_type: string | null;
 }
 
+export interface AudioMetadata {
+  duration_seconds: number;
+  format_name: string | null;
+  codec_name: string | null;
+  sample_rate: number | null;
+  channels: number | null;
+}
+
 export interface Job {
   job_id: string;
   status: JobStatus;
@@ -38,6 +46,8 @@ export interface Job {
   message: string | null;
   error_code: ErrorCode | null;
   source: JobSource;
+  /** Filled in once the audio preparation stage has probed the recording. */
+  audio: AudioMetadata | null;
   speaker_count: number | null;
   created_at: string;
   updated_at: string;
@@ -161,4 +171,13 @@ export function formatBytes(bytes: number): string {
     unit += 1;
   }
   return `${value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`;
+}
+
+export function formatDuration(seconds: number): string {
+  const total = Math.round(seconds);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return hours > 0 ? `${hours}:${pad(minutes)}:${pad(secs)}` : `${minutes}:${pad(secs)}`;
 }

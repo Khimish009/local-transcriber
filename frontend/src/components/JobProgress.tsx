@@ -1,5 +1,6 @@
 "use client";
 
+import { TranscriptView } from "@/components/TranscriptView";
 import { useJob } from "@/hooks/useJob";
 import { describeError, formatBytes, formatDuration, STAGE_LABELS } from "@/lib/jobs";
 
@@ -58,18 +59,28 @@ export function JobProgress({ jobId, onReset }: Props) {
           .join(" · ")}
       </p>
 
-      <div className="progress" role="progressbar" aria-valuenow={job.progress} aria-valuemin={0} aria-valuemax={100}>
-        <div
-          className={`progress__bar${failed ? " progress__bar--failed" : ""}`}
-          style={{ width: `${job.progress}%` }}
-        />
-      </div>
+      {!completed && (
+        <>
+          <div
+            className="progress"
+            role="progressbar"
+            aria-valuenow={job.progress}
+            aria-valuemin={0}
+            aria-valuemax={100}
+          >
+            <div
+              className={`progress__bar${failed ? " progress__bar--failed" : ""}`}
+              style={{ width: `${job.progress}%` }}
+            />
+          </div>
 
-      <div className="row">
-        <div className="row__label">{STAGE_LABELS[job.current_stage]}</div>
-        <span className="badge badge--ok">{job.progress}%</span>
-        <div className="row__detail">{degraded ? "SSE недоступен, опрос по таймеру" : ""}</div>
-      </div>
+          <div className="row">
+            <div className="row__label">{STAGE_LABELS[job.current_stage]}</div>
+            <span className="badge badge--ok">{job.progress}%</span>
+            <div className="row__detail">{degraded ? "SSE недоступен, опрос по таймеру" : ""}</div>
+          </div>
+        </>
+      )}
 
       {failed && (
         <p className="error" role="alert">
@@ -77,11 +88,7 @@ export function JobProgress({ jobId, onReset }: Props) {
         </p>
       )}
 
-      {completed && (
-        <p className="muted">
-          {job.message ?? "Готово."} Просмотр транскрипта и экспорт появятся на следующих этапах.
-        </p>
-      )}
+      {completed && <TranscriptView jobId={job.job_id} />}
     </section>
   );
 }

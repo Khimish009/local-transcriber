@@ -314,6 +314,14 @@ Polling можно оставить fallback.
 GET /api/v1/jobs/{job_id}/transcript
 ```
 
+### Source audio
+
+```http
+GET /api/v1/jobs/{job_id}/audio
+```
+
+Отдаёт исходную запись с поддержкой HTTP Range, чтобы плеер мог перематывать по таймкоду.
+
 ### Rename speakers
 
 ```http
@@ -576,7 +584,10 @@ DIARIZATION_FAILED
 ASR_FAILED
 EXPORT_FAILED
 JOB_NOT_FOUND
+RESULT_NOT_READY
 ```
+
+`RESULT_NOT_READY` (HTTP 409) означает, что job существует, но результат ещё не сформирован. Это не ошибка: UI продолжает показывать прогресс.
 
 Frontend показывает понятное сообщение, но backend logs сохраняют technical traceback.
 

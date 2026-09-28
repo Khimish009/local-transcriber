@@ -8,10 +8,13 @@ Lives in `app/` rather than `worker/` because both the API image and the worker 
 """
 
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, RootModel, StringConstraints
 
 TRANSCRIPT_VERSION = 1
+
+MAX_DISPLAY_NAME_LENGTH = 80
 
 
 class TranscriptSource(BaseModel):
@@ -63,3 +66,15 @@ class Transcript(BaseModel):
     words: list[TranscriptWord] = Field(default_factory=list)
     segments: list[TranscriptSegment] = Field(default_factory=list)
     created_at: datetime
+
+
+DisplayName = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_DISPLAY_NAME_LENGTH),
+]
+
+
+class SpeakerNames(RootModel[dict[str, DisplayName]]):
+    """Body of `PATCH /jobs/{id}/speakers`: `{"SPEAKER_00": "Анна"}` (SPEC.md §6)."""
+
+    root: dict[str, DisplayName] = Field(min_length=1)

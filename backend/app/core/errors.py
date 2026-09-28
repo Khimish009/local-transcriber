@@ -16,6 +16,9 @@ class ErrorCode(StrEnum):
     ASR_FAILED = "ASR_FAILED"
     EXPORT_FAILED = "EXPORT_FAILED"
     JOB_NOT_FOUND = "JOB_NOT_FOUND"
+    # The job exists but has not produced a result yet — distinct from "no such job",
+    # because the UI keeps showing progress instead of an error.
+    RESULT_NOT_READY = "RESULT_NOT_READY"
 
 
 class AppError(Exception):

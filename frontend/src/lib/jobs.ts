@@ -22,7 +22,8 @@ export type ErrorCode =
   | "DIARIZATION_FAILED"
   | "ASR_FAILED"
   | "EXPORT_FAILED"
-  | "JOB_NOT_FOUND";
+  | "JOB_NOT_FOUND"
+  | "RESULT_NOT_READY";
 
 export interface JobSource {
   filename: string;
@@ -79,6 +80,7 @@ const ERROR_MESSAGES: Record<ErrorCode, string> = {
   ASR_FAILED: "Не удалось распознать речь.",
   EXPORT_FAILED: "Не удалось сформировать файлы результата.",
   JOB_NOT_FOUND: "Задача не найдена.",
+  RESULT_NOT_READY: "Результат ещё не готов.",
 };
 
 export function describeError(
@@ -103,7 +105,7 @@ export class ApiError extends Error {
   }
 }
 
-async function toApiError(response: Response): Promise<ApiError> {
+export async function toApiError(response: Response): Promise<ApiError> {
   let code: ErrorCode | null = null;
   let message = `Ошибка запроса (${response.status})`;
   try {

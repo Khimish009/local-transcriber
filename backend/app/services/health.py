@@ -9,6 +9,7 @@ from app.schemas.health import (
     HealthResponse,
     ModelsHealth,
     RedisHealth,
+    UploadLimits,
     WorkersHealth,
 )
 
@@ -45,7 +46,7 @@ def check_workers(redis: Redis, queue_name: str) -> WorkersHealth:
 
 
 def check_models(settings: Settings) -> ModelsHealth:
-    """Phase 0 does not load any ML model yet — only the persistent directory is verified."""
+    """No ML model is loaded yet (Phases 3-4) — only the persistent directory is verified."""
     if not settings.models_dir.is_dir():
         return ModelsHealth(
             status="missing",
@@ -57,7 +58,7 @@ def check_models(settings: Settings) -> ModelsHealth:
         status="not_required",
         asr_model=settings.asr_model,
         device=settings.device,
-        detail="ML models are not loaded yet (Phase 0)",
+        detail="ML models are not loaded yet",
     )
 
 
@@ -80,4 +81,8 @@ def build_health(redis: Redis, settings: Settings) -> HealthResponse:
         redis=redis_health,
         workers=workers_health,
         models=models_health,
+        limits=UploadLimits(
+            max_upload_mb=settings.max_upload_mb,
+            allowed_extensions=settings.allowed_extensions,
+        ),
     )

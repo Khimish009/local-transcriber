@@ -1,6 +1,6 @@
 "use client";
 
-import { useHealth } from "@/hooks/useHealth";
+import type { HealthState } from "@/hooks/useHealth";
 import { API_BASE_URL } from "@/lib/api";
 
 type Tone = "ok" | "warn" | "bad";
@@ -37,8 +37,8 @@ function Row({
   );
 }
 
-export function HealthPanel() {
-  const { data, error, loading, refresh } = useHealth();
+export function HealthPanel({ state }: { state: HealthState }) {
+  const { data, error, loading, refresh } = state;
 
   return (
     <section className="panel">

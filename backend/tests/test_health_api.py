@@ -6,7 +6,15 @@ def test_health_returns_200_and_full_payload(client) -> None:
 
     assert response.status_code == 200
     body = response.json()
-    assert set(body) == {"status", "version", "app_env", "redis", "workers", "models"}
+    assert set(body) == {
+        "status",
+        "version",
+        "app_env",
+        "redis",
+        "workers",
+        "models",
+        "limits",
+    }
     assert body["redis"]["status"] == "ok"
 
 
@@ -33,3 +41,10 @@ def test_models_missing_when_directory_absent(client, settings: Settings) -> Non
 
     assert body["models"]["status"] == "missing"
     assert body["models"]["asr_model"] == settings.asr_model
+
+
+def test_health_exposes_upload_limits(client, settings: Settings) -> None:
+    limits = client.get("/api/v1/health").json()["limits"]
+
+    assert limits["max_upload_mb"] == settings.max_upload_mb
+    assert "wav" in limits["allowed_extensions"]

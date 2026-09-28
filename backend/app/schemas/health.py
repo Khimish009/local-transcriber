@@ -25,6 +25,13 @@ class ModelsHealth(BaseModel):
     detail: str | None = None
 
 
+class UploadLimits(BaseModel):
+    """Exposed so the UI can validate a file before uploading it (SPEC.md §7)."""
+
+    max_upload_mb: int
+    allowed_extensions: list[str]
+
+
 class HealthResponse(BaseModel):
     status: ComponentStatus
     version: str
@@ -32,3 +39,4 @@ class HealthResponse(BaseModel):
     redis: RedisHealth
     workers: WorkersHealth
     models: ModelsHealth
+    limits: UploadLimits

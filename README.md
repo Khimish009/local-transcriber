@@ -82,18 +82,19 @@ Generate TXT / DOCX / PDF
 
 ---
 
-## Текущий статус: Phase 0 — Bootstrap
+## Текущий статус: Phase 1 — Job infrastructure
 
-Реализован только каркас системы. ML-моделей, upload и экспорта пока нет.
+Работает инфраструктура задач без ML: файл загружается, задача уходит в очередь, прогресс виден в UI. Реального распознавания ещё нет — pipeline в worker пока заглушка, которая проходит по настоящему state machine.
 
 Работает:
-- `docker compose up --build` поднимает `frontend`, `api`, `worker`, `redis`;
-- `GET /api/v1/health` показывает статус API, Redis, worker и моделей;
-- страница `http://localhost:3000` отображает этот статус и обновляет его каждые 10 секунд;
-- у всех четырёх сервисов есть healthchecks;
-- backend-тесты (`pytest`) покрывают health-схему, health-сервис и конфигурацию.
+- `docker compose up --build` поднимает `frontend`, `api`, `worker`, `redis`, у всех есть healthchecks;
+- `GET /api/v1/health` — статус API, Redis, worker, моделей и лимитов загрузки;
+- `POST /api/v1/jobs` — потоковая загрузка файла, валидация формата/размера, безопасное имя, сохранение в `data/jobs/<job_id>/source/`;
+- `GET /api/v1/jobs/{job_id}` — статус, стадия, прогресс, код ошибки;
+- `GET /api/v1/jobs/{job_id}/events` — SSE с обновлениями прогресса (в UI есть fallback на polling);
+- UI: drag & drop, выбор количества спикеров, прогресс-бар с названием стадии, понятные сообщения об ошибках.
 
-Следующий этап — `Phase 1 — Job infrastructure` (см. `TASKS.md`).
+Следующий этап — `Phase 2 — Audio preprocessing` (см. `TASKS.md`).
 
 ### Быстрый старт
 

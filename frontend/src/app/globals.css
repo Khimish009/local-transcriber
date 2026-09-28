@@ -142,3 +142,79 @@ code {
     gap: 4px;
   }
 }
+
+.warning {
+  margin: 24px 0 0;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--warn);
+  color: var(--warn);
+}
+
+.dropzone {
+  margin-top: 16px;
+  padding: 32px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.dropzone:hover,
+.dropzone:focus-visible,
+.dropzone--active {
+  border-color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 6%, transparent);
+}
+
+.form-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.form-row label {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+select {
+  font: inherit;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+}
+
+button.primary {
+  margin-left: auto;
+  border-color: var(--ok);
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.progress {
+  margin: 16px 0 8px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.progress__bar {
+  height: 100%;
+  background: var(--ok);
+  transition: width 0.3s ease;
+}
+
+.progress__bar--failed {
+  background: var(--bad);
+}

@@ -20,6 +20,11 @@ export interface ModelsHealth {
   detail: string | null;
 }
 
+export interface HealthLimits {
+  max_upload_mb: number;
+  allowed_extensions: string[];
+}
+
 export interface HealthResponse {
   status: ComponentStatus;
   version: string;
@@ -27,6 +32,7 @@ export interface HealthResponse {
   redis: RedisHealth;
   workers: WorkersHealth;
   models: ModelsHealth;
+  limits: HealthLimits;
 }
 
 export const API_BASE_URL =

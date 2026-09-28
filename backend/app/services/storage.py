@@ -76,6 +76,10 @@ class JobStorage:
     def asr_words_path(self, job_id: str) -> Path:
         return self.work_dir(job_id) / "asr_words.json"
 
+    def transcript_path(self, job_id: str) -> Path:
+        """The canonical result — TXT/DOCX/PDF are generated from this file."""
+        return self.result_dir(job_id) / "transcript.json"
+
     def source_path(self, job_id: str, extension: str) -> Path:
         return self.source_dir(job_id) / f"original.{extension}"
 

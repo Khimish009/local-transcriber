@@ -21,6 +21,19 @@ def test_env_overrides_defaults(monkeypatch) -> None:
     assert settings.asr_model == "v3_rnnt"
 
 
+def test_alignment_thresholds_come_from_env(monkeypatch) -> None:
+    """SPEC.md §3.3 — thresholds must never be hardcoded in business logic."""
+    monkeypatch.setenv("SPEAKER_MATCH_TOLERANCE_MS", "500")
+    monkeypatch.setenv("BLOCK_SILENCE_GAP_MS", "2000")
+    monkeypatch.setenv("MAX_BLOCK_SECONDS", "25")
+
+    settings = Settings()
+
+    assert settings.speaker_match_tolerance_ms == 500
+    assert settings.block_silence_gap_ms == 2000
+    assert settings.max_block_seconds == 25.0
+
+
 def test_cors_origins_from_env_not_parsed_as_json(monkeypatch) -> None:
     monkeypatch.setenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001")
 

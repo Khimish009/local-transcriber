@@ -32,6 +32,14 @@ class Settings(BaseSettings):
     max_asr_chunk_seconds: int = 20
     merge_silence_gap_ms: int = 400
 
+    # Alignment thresholds (SPEC.md §3.4, §3.5). A word whose midpoint falls outside every
+    # speaker interval may still be attached to one this close; otherwise speaker_id is null.
+    speaker_match_tolerance_ms: int = 250
+    # A pause at least this long starts a new transcript block.
+    block_silence_gap_ms: int = 1500
+    # Hard cap on a block, so a long monologue never becomes one giant paragraph.
+    max_block_seconds: float = 40.0
+
     # NoDecode: comma-separated list, not JSON. Extensions are stored without the dot.
     allowed_extensions: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["wav", "mp3", "m4a", "mp4", "webm", "ogg"]

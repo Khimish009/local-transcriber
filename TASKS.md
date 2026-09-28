@@ -13,12 +13,13 @@
 | 2 — Audio preprocessing | ✅ сделано |
 | 3 — Diarization | ✅ сделано |
 | 4 — GigaAM ASR | ✅ сделано |
-| 5 — Alignment | ⬅️ следующий |
-| 6–11 | не начато |
+| 5 — Alignment | ✅ сделано |
+| 6 — Exports | ⬅️ следующий |
+| 7–11 | не начато |
 
 Текущее состояние системы описано в `README.md` («Текущий статус»), принятые технические решения — в `AGENTS.md` («Уже принятые решения»).
 
-Стадии `ALIGNING` и `GENERATING_EXPORTS` в `backend/worker/jobs.py` пока заглушки: они проходят по настоящему state machine с прогрессом, но ничего не считают. Phase 5 заменяет первую из них.
+Стадия `GENERATING_EXPORTS` в `backend/worker/jobs.py` пока заглушка: она проходит по настоящему state machine с прогрессом, но ничего не считает. Phase 6 заменяет её.
 
 ---
 

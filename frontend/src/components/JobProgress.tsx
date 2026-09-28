@@ -1,8 +1,17 @@
 "use client";
 
+import { useState } from "react";
+
 import { TranscriptView } from "@/components/TranscriptView";
 import { useJob } from "@/hooks/useJob";
-import { describeError, formatBytes, formatDuration, STAGE_LABELS } from "@/lib/jobs";
+import {
+  ApiError,
+  deleteJob,
+  describeError,
+  formatBytes,
+  formatDuration,
+  STAGE_LABELS,
+} from "@/lib/jobs";
 
 interface Props {
   jobId: string;
@@ -11,6 +20,21 @@ interface Props {
 
 export function JobProgress({ jobId, onReset }: Props) {
   const { job, error, degraded } = useJob(jobId);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const handleDelete = async () => {
+    if (!window.confirm("Удалить задачу вместе с записью и результатами?")) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await deleteJob(jobId);
+      onReset();
+    } catch (cause: unknown) {
+      setDeleteError(cause instanceof ApiError ? cause.message : "Не удалось удалить задачу.");
+      setDeleting(false);
+    }
+  };
 
   if (error && !job) {
     return (
@@ -42,10 +66,26 @@ export function JobProgress({ jobId, onReset }: Props) {
     <section className="panel">
       <header className="panel__header">
         <h2>{job.source.filename}</h2>
-        <button type="button" onClick={onReset}>
-          {completed || failed ? "Новая запись" : "Отменить просмотр"}
-        </button>
+        <div className="panel__actions">
+          <button type="button" onClick={onReset} disabled={deleting}>
+            {completed || failed ? "Новая запись" : "Отменить просмотр"}
+          </button>
+          <button
+            type="button"
+            className="danger"
+            onClick={() => void handleDelete()}
+            disabled={deleting}
+          >
+            {deleting ? "Удаление…" : "Удалить задачу"}
+          </button>
+        </div>
       </header>
+
+      {deleteError && (
+        <p className="error" role="alert">
+          {deleteError}
+        </p>
+      )}
 
       <p className="muted">
         {[

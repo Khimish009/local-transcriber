@@ -51,14 +51,23 @@ PY
 
   error_code=$(echo "${body}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["error_code"] or "")')
 
-  # The fixture is a synthetic tone, not speech, so the diarizer may legitimately find no
-  # speaker turns. Any other failure means the pipeline itself is broken.
+  # The fixture is a synthetic tone, not speech: the diarizer may find no speaker turns,
+  # and if it does find some, GigaAM recognizes no words in them. Both outcomes mean the
+  # pipeline ran. Any other failure means it is broken.
   if [ "${status}" = "COMPLETED" ]; then
     echo "OK: job ${job_id} reached COMPLETED"
-  elif [ "${status}" = "FAILED" ] && [ "${error_code}" = "DIARIZATION_FAILED" ]; then
+  elif [ "${status}" = "FAILED" ] && \
+       { [ "${error_code}" = "DIARIZATION_FAILED" ] || [ "${error_code}" = "ASR_FAILED" ]; }; then
     echo "OK: pipeline ran; no speech found in the synthetic fixture (expected)"
   else
     echo "FAIL: job ended as ${status} (${error_code:-no error code})"
     exit 1
   fi
+
+  # T8.3 — the smoke test cleans up after itself instead of leaving a job per run behind.
+  echo "==> DELETE ${API_URL}/api/v1/jobs/${job_id}"
+  curl -fsS -o /dev/null -X DELETE "${API_URL}/api/v1/jobs/${job_id}"
+  code=$(curl -s -o /dev/null -w '%{http_code}' "${API_URL}/api/v1/jobs/${job_id}")
+  [ "${code}" = "404" ] || { echo "FAIL: job still exists after delete (${code})"; exit 1; }
+  echo "OK: job ${job_id} deleted"
 fi

@@ -194,6 +194,17 @@ select {
   color: inherit;
 }
 
+.panel__actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+button.danger {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+
 button.primary {
   margin-left: auto;
   border-color: var(--ok);

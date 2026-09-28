@@ -93,3 +93,48 @@ def test_process_job_marks_failure_and_reraises(worker_env, store, monkeypatch) 
     assert final.status is JobStatus.FAILED
     assert final.message == "Internal error while processing the job"
     assert final.error_code is None
+
+
+def test_job_deleted_before_it_starts_is_skipped(worker_env, store) -> None:
+    job = store.create(JobSource(filename="meeting.wav", size_bytes=10))
+    store.delete(job.job_id)
+
+    process_job(job.job_id)  # no exception: there is nothing left to process
+
+    assert store.get(job.job_id) is None
+
+
+def test_job_deleted_while_running_does_not_resurrect_the_record(
+    worker_env, store, monkeypatch
+) -> None:
+    """T8.3 — a delete mid-flight must not leave a half-written FAILED record behind."""
+    job = store.create(JobSource(filename="meeting.wav", size_bytes=10))
+    original_update = store.__class__.update
+
+    def vanish(self, job_id, **kwargs):
+        if kwargs.get("status") is JobStatus.TRANSCRIBING:
+            self.delete(job_id)
+        return original_update(self, job_id, **kwargs)
+
+    monkeypatch.setattr(store.__class__, "update", vanish)
+
+    process_job(job.job_id)
+
+    assert store.get(job.job_id) is None
+
+
+def test_stage_failure_after_a_delete_is_not_reraised(worker_env, store, monkeypatch) -> None:
+    """A stage that fails only because the files were deleted must not look like a crash."""
+    from app.core.errors import AppError, ErrorCode
+
+    job = store.create(JobSource(filename="meeting.wav", size_bytes=10))
+
+    def deleted_then_boom(job_id, store_, storage, settings):
+        store_.delete(job_id)
+        raise AppError(ErrorCode.DIARIZATION_FAILED, "normalized.wav does not exist")
+
+    monkeypatch.setattr("worker.jobs.diarize", deleted_then_boom)
+
+    process_job(job.job_id)  # no exception reaches RQ
+
+    assert store.get(job.job_id) is None

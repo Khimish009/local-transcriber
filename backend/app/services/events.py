@@ -51,6 +51,11 @@ async def job_event_stream(
             else:
                 # Fallback poll — also covers a publish lost during reconnection.
                 current = store.get(job_id)
+                if current is None:
+                    # The job was deleted (T8.3): close the stream instead of streaming
+                    # keep-alives for a job that no longer exists.
+                    yield format_sse("gone", job_id)
+                    return
 
             if current is not None and current.updated_at > last_seen:
                 last_seen = current.updated_at

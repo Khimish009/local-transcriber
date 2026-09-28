@@ -6,7 +6,8 @@ job. That is deliberate: models are loaded once at startup and reused by every j
 child inherits the model memory but not the OpenMP thread pool backing it.
 
 The trade-off is that a hard crash inside inference takes the worker down; Docker's
-restart policy brings it back.
+restart policy brings it back, and `recover_orphaned_jobs` fails the job it was running
+so it does not stay frozen mid-stage forever.
 """
 
 import logging
@@ -17,6 +18,7 @@ from app.core.config import Settings, get_settings
 from app.core.errors import AppError
 from app.core.logging import configure_logging
 from app.core.redis import get_redis
+from app.services.recovery import recover_orphaned_jobs
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +49,15 @@ def main() -> None:
         "worker starting",
         extra={"stage": "startup", "queue": settings.queue_name, "device": settings.device},
     )
+
+    # Before taking new work: whatever was running when this process last died can never be
+    # resumed, so it must not stay stuck on a progress bar forever (T8.2).
+    orphaned = recover_orphaned_jobs(redis)
+    if orphaned:
+        logger.warning(
+            "orphaned jobs failed after restart",
+            extra={"stage": "startup", "count": len(orphaned)},
+        )
 
     warm_up_models(settings)
 

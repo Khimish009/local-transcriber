@@ -1,4 +1,5 @@
 import logging
+from datetime import UTC, datetime
 
 from redis import Redis
 from redis.exceptions import RedisError
@@ -16,6 +17,9 @@ from app.services.model_cache import DIARIZATION_MODEL, is_asr_model_cached, is_
 
 logger = logging.getLogger(__name__)
 
+# Extra grace on top of two missed heartbeats, to absorb clock and scheduling jitter.
+HEARTBEAT_SLACK_SECONDS = 15
+
 
 def check_redis(redis: Redis) -> RedisHealth:
     try:
@@ -26,7 +30,19 @@ def check_redis(redis: Redis) -> RedisHealth:
     return RedisHealth(status="ok")
 
 
-def check_workers(redis: Redis, queue_name: str) -> WorkersHealth:
+def _is_alive(worker: Worker, max_silence: float) -> bool:
+    """A worker killed mid-job never deregisters; its record lingers until Redis expires it.
+
+    Without this check /health kept reporting `ok` for a worker that had already crashed,
+    and the UI hid its "worker unavailable" warning (T8.2).
+    """
+    heartbeat = worker.last_heartbeat
+    if heartbeat is None:
+        return False
+    return (datetime.now(UTC) - heartbeat.replace(tzinfo=UTC)).total_seconds() <= max_silence
+
+
+def check_workers(redis: Redis, queue_name: str, heartbeat_seconds: int) -> WorkersHealth:
     try:
         workers = Worker.all(connection=redis)
     except RedisError as exc:
@@ -35,7 +51,9 @@ def check_workers(redis: Redis, queue_name: str) -> WorkersHealth:
             status="down", count=0, queue=queue_name, detail="Redis is not reachable"
         )
 
-    listening = [w for w in workers if queue_name in w.queue_names()]
+    # One missed heartbeat is normal under load; two in a row means the process is gone.
+    max_silence = heartbeat_seconds * 2 + HEARTBEAT_SLACK_SECONDS
+    listening = [w for w in workers if queue_name in w.queue_names() and _is_alive(w, max_silence)]
     if not listening:
         return WorkersHealth(
             status="down",
@@ -84,7 +102,7 @@ def check_models(settings: Settings) -> ModelsHealth:
 
 def build_health(redis: Redis, settings: Settings) -> HealthResponse:
     redis_health = check_redis(redis)
-    workers_health = check_workers(redis, settings.queue_name)
+    workers_health = check_workers(redis, settings.queue_name, settings.worker_heartbeat_seconds)
     models_health = check_models(settings)
 
     if redis_health.status == "down":

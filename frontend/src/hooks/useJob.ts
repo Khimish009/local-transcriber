@@ -81,6 +81,8 @@ export function useJob(jobId: string | null): JobState {
       apply(JSON.parse((event as MessageEvent<string>).data) as Job);
       finish();
     });
+    // The job was deleted while we were watching it — stop, do not fall back to polling.
+    source.addEventListener("gone", finish);
     source.onerror = () => {
       // The browser retries on its own; polling keeps progress visible meanwhile.
       if (!closed) startPolling();

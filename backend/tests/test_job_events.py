@@ -52,3 +52,16 @@ def test_events_endpoint_returns_404_for_unknown_job(client) -> None:
 
     assert response.status_code == 404
     assert response.json()["error_code"] == "JOB_NOT_FOUND"
+
+
+async def test_stream_closes_when_the_job_is_deleted(store, async_redis, settings) -> None:
+    """T8.3 — a deleted job must end the stream instead of streaming keep-alives forever."""
+    job = store.create(JobSource(filename="meeting.wav", size_bytes=10))
+
+    stream = job_event_stream(job.job_id, store, async_redis, settings)
+    snapshot = await anext(stream)
+    store.delete(job.job_id)
+    closing = await anext(stream)
+
+    assert "event: job" in snapshot
+    assert closing == f"event: gone\ndata: {job.job_id}\n\n"

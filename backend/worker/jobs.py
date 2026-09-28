@@ -226,12 +226,35 @@ def generate_exports(job_id: str, store: JobStore, storage: JobStorage, settings
     )
 
 
+def record_failure(
+    store: JobStore, job_id: str, message: str, code: ErrorCode | None = None
+) -> bool:
+    """Mark the job failed. Returns False if the record was deleted mid-flight (T8.3).
+
+    A delete request removes the Redis record while the worker is still inside a stage;
+    there is then nothing left to fail, and that is not an error worth masking the original
+    one with.
+    """
+    try:
+        store.fail(job_id, message=message, error_code=code)
+    except AppError as exc:
+        if exc.code is not ErrorCode.JOB_NOT_FOUND:
+            raise
+        logger.info("job record already deleted", extra={"job_id": job_id})
+        return False
+    return True
+
+
 def process_job(job_id: str) -> None:
     settings = get_settings()
     store = JobStore(get_redis())
     storage = JobStorage(settings.data_dir)
 
-    store.require(job_id)
+    if store.get(job_id) is None:
+        # Deleted while it sat in the queue (T8.3) — nothing to process, nothing to fail.
+        logger.info("job record is gone, skipping", extra={"job_id": job_id})
+        return
+
     logger.info("job started", extra={"job_id": job_id, "device": settings.device})
     started = time.monotonic()
 
@@ -249,14 +272,21 @@ def process_job(job_id: str) -> None:
             message="Транскрипт готов",
         )
     except AppError as exc:
+        if exc.code is ErrorCode.JOB_NOT_FOUND:
+            # The user deleted the job while it was running — an expected outcome, not a
+            # pipeline failure. Nothing is left to update.
+            logger.info("job deleted while running", extra={"job_id": job_id})
+            return
         # Expected pipeline failure with a stable error code (SPEC.md §12).
         logger.error("job failed", extra={"job_id": job_id, "error_code": exc.code.value})
-        store.fail(job_id, message=exc.message, error_code=exc.code)
-        raise
+        if record_failure(store, job_id, exc.message, exc.code):
+            raise
+        # The stage only failed because the deletion pulled its files away — do not hand RQ
+        # a traceback for a job the user asked to forget.
     except Exception:
         logger.exception("job crashed", extra={"job_id": job_id})
-        store.fail(job_id, message="Internal error while processing the job")
-        raise
+        if record_failure(store, job_id, "Internal error while processing the job"):
+            raise
     finally:
         logger.info(
             "job finished",

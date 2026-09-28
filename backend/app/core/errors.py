@@ -19,6 +19,9 @@ class ErrorCode(StrEnum):
     # The job exists but has not produced a result yet — distinct from "no such job",
     # because the UI keeps showing progress instead of an error.
     RESULT_NOT_READY = "RESULT_NOT_READY"
+    # The worker process died while the job was running (SimpleWorker runs jobs in-process,
+    # so a hard crash inside inference takes it down). Recovered at worker startup.
+    WORKER_CRASHED = "WORKER_CRASHED"
 
 
 class AppError(Exception):

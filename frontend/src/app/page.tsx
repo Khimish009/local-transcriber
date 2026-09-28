@@ -5,8 +5,8 @@ export default function HomePage() {
     <main className="page">
       <h1>Local Transcriber</h1>
       <p className="muted">
-        Phase 1 — загрузка файла и фоновая задача. Распознавание и экспорт появятся на следующих
-        этапах.
+        Локальная расшифровка записей: спикеры, таймкоды, экспорт в JSON, TXT, DOCX и PDF. Аудио
+        не покидает этот компьютер.
       </p>
       <TranscriberApp />
     </main>

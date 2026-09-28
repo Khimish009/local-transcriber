@@ -17,6 +17,7 @@ from app.api.deps import (
 from app.core.errors import AppError, ErrorCode
 from app.schemas.job import Job, JobCreatedResponse, JobSource, JobStatus
 from app.schemas.transcript import SpeakerNames, Transcript
+from app.services.cleanup import delete_job
 from app.services.events import job_event_stream
 from app.services.media import content_disposition, media_type_for, range_response
 from app.services.queue import enqueue_job
@@ -108,6 +109,18 @@ def _discard(store: JobStoreDep, storage: JobStorageDep, job_id: str) -> None:
 @router.get("/{job_id}", response_model=Job)
 def get_job(job_id: str, store: JobStoreDep) -> Job:
     return store.require(validate_job_id(job_id))
+
+
+@router.delete("/{job_id}", status_code=204)
+def remove_job(
+    job_id: str,
+    redis: RedisDep,
+    store: JobStoreDep,
+    storage: JobStorageDep,
+) -> Response:
+    """T8.3 — manual cleanup: the job record, its queue entry and its files all go away."""
+    delete_job(redis, store, storage, validate_job_id(job_id))
+    return Response(status_code=204)
 
 
 @router.get("/{job_id}/transcript", response_model=Transcript)

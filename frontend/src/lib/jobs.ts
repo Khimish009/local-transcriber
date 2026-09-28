@@ -23,7 +23,8 @@ export type ErrorCode =
   | "ASR_FAILED"
   | "EXPORT_FAILED"
   | "JOB_NOT_FOUND"
-  | "RESULT_NOT_READY";
+  | "RESULT_NOT_READY"
+  | "WORKER_CRASHED";
 
 export interface JobSource {
   filename: string;
@@ -81,6 +82,7 @@ const ERROR_MESSAGES: Record<ErrorCode, string> = {
   EXPORT_FAILED: "Не удалось сформировать файлы результата.",
   JOB_NOT_FOUND: "Задача не найдена.",
   RESULT_NOT_READY: "Результат ещё не готов.",
+  WORKER_CRASHED: "Обработка прервана: worker перезапустился. Запустите задачу заново.",
 };
 
 export function describeError(
@@ -157,6 +159,16 @@ export async function fetchJob(jobId: string, signal?: AbortSignal): Promise<Job
     throw await toApiError(response);
   }
   return (await response.json()) as Job;
+}
+
+/** T8.3 — manual cleanup: removes the record, the queue entry and the files. */
+export async function deleteJob(jobId: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/jobs/${jobId}`, {
+    method: "DELETE",
+  });
+  if (!response.ok && response.status !== 404) {
+    throw await toApiError(response);
+  }
 }
 
 export function jobEventsUrl(jobId: string): string {

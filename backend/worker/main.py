@@ -11,6 +11,8 @@ so it does not stay frozen mid-stage forever.
 """
 
 import logging
+import threading
+from typing import Any, Protocol
 
 from rq import Queue, SimpleWorker
 
@@ -21,6 +23,44 @@ from app.core.redis import get_redis
 from app.services.recovery import recover_orphaned_jobs
 
 logger = logging.getLogger(__name__)
+
+
+class Heartbeating(Protocol):
+    def heartbeat(self, timeout: int | None = None, pipeline: Any = None) -> None: ...
+
+
+def beat_until(worker: Heartbeating, interval: float, stop: threading.Event) -> int:
+    """Refresh the worker registration every `interval` seconds. Returns the beats sent.
+
+    RQ only heartbeats between jobs — in the forking worker the parent process keeps
+    beating while the child runs, but `SimpleWorker` executes the job inline, so nothing
+    touches Redis for the whole duration. A transcription takes tens of minutes, the
+    registration key expires after two minutes, and the worker silently disappears from
+    `Worker.all()`: /health reports "no worker" while the worker is busy working, and the
+    container healthcheck starts failing.
+
+    Worse, the loss is permanent. RQ's own `heartbeat()` only writes `last_heartbeat`, so
+    once the key has expired it comes back holding that single field — without `queues`.
+    The worker then never matches its own queue again until the process restarts.
+    """
+    beats = 0
+    while not stop.wait(interval):
+        try:
+            worker.heartbeat()
+            beats += 1
+        except Exception:
+            # A Redis blip must not take down the worker; the next beat will retry.
+            logger.warning("heartbeat failed", extra={"stage": "worker"})
+    return beats
+
+
+def start_keepalive(worker: Heartbeating, interval: float) -> threading.Event:
+    stop = threading.Event()
+    thread = threading.Thread(
+        target=beat_until, args=(worker, interval, stop), name="rq-keepalive", daemon=True
+    )
+    thread.start()
+    return stop
 
 
 def warm_up_models(settings: Settings) -> None:
@@ -67,6 +107,8 @@ def main() -> None:
         connection=redis,
         default_worker_ttl=settings.worker_heartbeat_seconds,
     )
+    # Keeps the registration alive while a long job occupies this process.
+    start_keepalive(worker, settings.worker_heartbeat_seconds / 2)
     worker.work(with_scheduler=False)
 
 

@@ -15,11 +15,37 @@ import {
   processingTime,
   STAGE_LABELS,
   TERMINAL_STATUSES,
+  type Job,
 } from "@/lib/jobs";
 
 interface Props {
   jobId: string;
   onReset: () => void;
+}
+
+/** One line about time: how long it is taking, or how long it took. */
+function describeTiming(job: Job, now: number): string {
+  // No speed estimate while it runs: progress is not linear in audio time across stages,
+  // so any "×N faster than realtime" shown mid-job would be made up.
+  const running = elapsedTime(job, now);
+  if (running !== null) return `Идёт ${formatElapsed(running)}`;
+
+  const done = processingTime(job);
+  if (done === null) return "";
+
+  const verb = job.status === "FAILED" ? "Остановилась через" : "Расшифровка заняла";
+  const note = done.exact
+    ? compareToRecording(job, done.seconds)
+    : " — вместе с ожиданием в очереди";
+  return `${verb} ${formatElapsed(done.seconds)}${note}`;
+}
+
+/** "быстрее записи в 1.7 раза" — states the direction, so the ratio cannot be read backwards. */
+function compareToRecording(job: Job, seconds: number): string {
+  if (!job.audio || seconds <= 0 || job.status === "FAILED") return "";
+  const ratio = job.audio.duration_seconds / seconds;
+  if (ratio >= 1) return ` — быстрее записи в ${ratio.toFixed(1)} раза`;
+  return ` — медленнее записи в ${(1 / ratio).toFixed(1)} раза`;
 }
 
 export function JobProgress({ jobId, onReset }: Props) {

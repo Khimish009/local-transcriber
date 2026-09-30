@@ -3,7 +3,14 @@
 import Link from "next/link";
 
 import { useJobs } from "@/hooks/useJobs";
-import { formatBytes, formatDuration, STAGE_LABELS, type Job } from "@/lib/jobs";
+import {
+  formatBytes,
+  formatDuration,
+  formatElapsed,
+  processingTime,
+  STAGE_LABELS,
+  type Job,
+} from "@/lib/jobs";
 
 const TONE_BY_STATUS: Record<string, string> = {
   COMPLETED: "ok",
@@ -21,11 +28,13 @@ function when(iso: string): string {
 }
 
 function details(job: Job): string {
+  const spent = processingTime(job);
   return [
     when(job.created_at),
     formatBytes(job.source.size_bytes),
     job.audio ? formatDuration(job.audio.duration_seconds) : null,
     job.status === "COMPLETED" ? null : `${job.progress}%`,
+    spent ? `обработка ${formatElapsed(spent.seconds)}` : null,
   ]
     .filter(Boolean)
     .join(" · ");

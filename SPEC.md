@@ -228,7 +228,11 @@ FAILED
 - message;
 - error_code;
 - created_at;
-- updated_at.
+- updated_at;
+- started_at (момент, когда worker взял задачу);
+- finished_at (момент завершения).
+
+`finished_at - started_at` — реальное время обработки, без ожидания в очереди.
 
 ### Progress
 
@@ -303,6 +307,8 @@ GET /api/v1/jobs?limit=50
 ```http
 GET /api/v1/jobs/{job_id}
 ```
+
+Запись задачи содержит `started_at` и `finished_at` — момент, когда worker взял задачу, и момент, когда закончил. По ним считается реальное время обработки, без ожидания в очереди. У записей, созданных до появления этих полей, они `null`.
 
 ### Delete job
 

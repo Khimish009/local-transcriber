@@ -1,12 +1,13 @@
 """T8.3 — manual job deletion."""
 
 import io
+import shutil
 
 from rq import Queue
 from rq.job import Job as RqJob
 
 from app.schemas.job import JobSource, JobStatus
-from app.services.cleanup import delete_job
+from app.services.cleanup import delete_job, purge_jobs_without_files
 from app.services.job_store import job_key
 from app.services.queue import enqueue_job, fetch_rq_job
 
@@ -65,3 +66,34 @@ def test_delete_a_running_job_drops_the_rq_record(settings, redis, store, storag
 
     assert store.get(job.job_id) is None
     assert fetch_rq_job(redis, job.job_id) is None
+
+
+# --- purging records whose files are gone (T11.1) ------------------------------
+
+
+def test_purge_removes_finished_jobs_without_a_directory(client, store, storage) -> None:
+    kept = _upload(client, filename="kept.wav")
+    orphan = _upload(client, filename="orphan.wav")
+    store.update(kept, status=JobStatus.COMPLETED, progress=100)
+    store.update(orphan, status=JobStatus.COMPLETED, progress=100)
+    shutil.rmtree(storage.job_dir(orphan))
+
+    assert purge_jobs_without_files(store, storage) == [orphan]
+    assert store.get(orphan) is None
+    assert store.get(kept) is not None
+
+
+def test_purge_leaves_a_job_that_has_not_finished_yet(client, store, storage) -> None:
+    """A fresh job exists in Redis for a moment before its directory does."""
+    job_id = _upload(client)
+    shutil.rmtree(storage.job_dir(job_id))
+
+    assert purge_jobs_without_files(store, storage) == []
+    assert store.get(job_id) is not None
+
+
+def test_purge_is_a_no_op_when_everything_is_in_place(client, store, storage) -> None:
+    job_id = _upload(client)
+    store.update(job_id, status=JobStatus.FAILED)
+
+    assert purge_jobs_without_files(store, storage) == []

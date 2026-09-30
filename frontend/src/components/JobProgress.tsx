@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { TranscriptView } from "@/components/TranscriptView";
 import { useJob } from "@/hooks/useJob";
@@ -8,9 +8,13 @@ import {
   ApiError,
   deleteJob,
   describeError,
+  elapsedTime,
   formatBytes,
   formatDuration,
+  formatElapsed,
+  processingTime,
   STAGE_LABELS,
+  TERMINAL_STATUSES,
 } from "@/lib/jobs";
 
 interface Props {
@@ -22,6 +26,16 @@ export function JobProgress({ jobId, onReset }: Props) {
   const { job, error, degraded } = useJob(jobId);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+
+  // The running clock ticks on its own: progress events arrive far too irregularly to
+  // drive it, and a stalled stage would otherwise freeze the elapsed time.
+  const running = job !== null && !TERMINAL_STATUSES.has(job.status);
+  useEffect(() => {
+    if (!running) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [running]);
 
   const handleDelete = async () => {
     if (!window.confirm("Удалить задачу вместе с записью и результатами?")) return;
@@ -68,7 +82,7 @@ export function JobProgress({ jobId, onReset }: Props) {
         <h2>{job.source.filename}</h2>
         <div className="panel__actions">
           <button type="button" onClick={onReset} disabled={deleting}>
-            {completed || failed ? "Новая запись" : "Отменить просмотр"}
+            Новая запись
           </button>
           <button
             type="button"
@@ -98,6 +112,8 @@ export function JobProgress({ jobId, onReset }: Props) {
           .filter(Boolean)
           .join(" · ")}
       </p>
+
+      <p className="muted">{describeTiming(job, now)}</p>
 
       {!completed && (
         <>

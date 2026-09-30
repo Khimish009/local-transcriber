@@ -53,6 +53,9 @@ export interface Job {
   speaker_count: number | null;
   created_at: string;
   updated_at: string;
+  /** Null until the worker picks the job up; null for records written before this existed. */
+  started_at: string | null;
+  finished_at: string | null;
 }
 
 export const TERMINAL_STATUSES: ReadonlySet<JobStatus> = new Set<JobStatus>([
@@ -171,6 +174,18 @@ export async function deleteJob(jobId: string): Promise<void> {
   }
 }
 
+/** T11.1 — every job, newest first. Survives a page reload; the job list links to each. */
+export async function fetchJobs(signal?: AbortSignal): Promise<Job[]> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/jobs`, {
+    cache: "no-store",
+    signal,
+  });
+  if (!response.ok) {
+    throw await toApiError(response);
+  }
+  return (await response.json()) as Job[];
+}
+
 export function jobEventsUrl(jobId: string): string {
   return `${API_BASE_URL}/api/v1/jobs/${jobId}/events`;
 }
@@ -185,6 +200,39 @@ export function formatBytes(bytes: number): string {
     unit += 1;
   }
   return `${value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`;
+}
+
+/**
+ * Seconds the worker spent on the job, or null when that cannot be known.
+ *
+ * Falls back to `created_at → updated_at` for jobs recorded before the timestamps existed;
+ * that span also includes the time the job waited in the queue, hence `exact`.
+ */
+export function processingTime(job: Job): { seconds: number; exact: boolean } | null {
+  if (job.started_at && job.finished_at) {
+    const seconds = (Date.parse(job.finished_at) - Date.parse(job.started_at)) / 1000;
+    return { seconds, exact: true };
+  }
+  if (!TERMINAL_STATUSES.has(job.status)) return null;
+  const seconds = (Date.parse(job.updated_at) - Date.parse(job.created_at)) / 1000;
+  return seconds > 0 ? { seconds, exact: false } : null;
+}
+
+/** How long the job has been running, for a job that has started but not finished. */
+export function elapsedTime(job: Job, now: number): number | null {
+  if (!job.started_at || TERMINAL_STATUSES.has(job.status)) return null;
+  return (now - Date.parse(job.started_at)) / 1000;
+}
+
+/** "2 ч 14 мин" / "3 мин 20 с" / "45 с" — a wall-clock span, not a media position. */
+export function formatElapsed(seconds: number): string {
+  const total = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  if (hours > 0) return `${hours} ч ${minutes} мин`;
+  if (minutes > 0) return `${minutes} мин ${secs} с`;
+  return `${secs} с`;
 }
 
 export function formatDuration(seconds: number): string {

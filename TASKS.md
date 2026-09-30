@@ -19,7 +19,7 @@
 | 8 — Reliability | ✅ сделано |
 | 9 — Windows/CUDA | ⏭️ пропущена: владелец проекта проверяет сам на своей Windows-машине |
 | 10 — Quality benchmark | 🟡 частично: T10.2/T10.3/T10.4 сделаны, T10.1 закрыт на одной записи вместо трёх |
-| 11 — Polish | ⬅️ следующий |
+| 11 — Polish | 🟡 в работе: T11.1 сделан |
 
 Текущее состояние системы описано в `README.md` («Текущий статус»), принятые технические решения — в `AGENTS.md` («Уже принятые решения»).
 
@@ -518,13 +518,27 @@ cd backend && PYTHONPATH=. .venv/bin/python -m benchmark.report \
 
 # Phase 11 — Polish
 
-- UI states;
-- README;
-- clean logs;
-- startup instructions;
-- smoke scripts for bash and PowerShell;
-- basic CI for lint/unit tests;
-- final clean-machine test.
+## T11.1 Список задач и ссылка на задачу
+
+✅ Сделано. `GET /api/v1/jobs` и маршрут `/jobs/<job_id>` во фронте.
+
+До этого `job_id` жил только в состоянии React: перезагрузка страницы теряла результат
+навсегда, а готовые расшифровки на диске были недостижимы через UI. Заодно worker при
+старте удаляет записи завершённых задач, у которых больше нет папки с файлами, — иначе
+список показывал «Готово» у задач, которые невозможно открыть.
+
+## Остальное
+
+- UI states — drag & drop уже есть (Phase 1); осталась вёрстка длинного транскрипта:
+  128 блоков рендерятся, но без виртуализации;
+- clean logs — на задачу уходит ~70 строк «job updated» уровня INFO, по строке на процент;
+- basic CI for lint/unit tests — нет вообще: нужен `ruff` + `pytest` + `npm run build`;
+- final clean-machine test;
+- посмотреть глазами DOCX и PDF — ни разу не открывались;
+- блоки, упирающиеся в `MAX_BLOCK_SECONDS` (14%), режутся по таймеру, а не по смыслу.
+
+Сделано раньше: smoke scripts for bash and PowerShell (Phase 8), README и startup
+instructions поддерживаются по ходу работы.
 
 ---
 

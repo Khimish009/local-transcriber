@@ -95,3 +95,47 @@ def test_get_job_with_non_uuid_id_returns_404(client) -> None:
 
     assert response.status_code == 404
     assert response.json()["error_code"] == "JOB_NOT_FOUND"
+
+
+# --- job list (T11.1) ---------------------------------------------------------
+
+
+def test_list_returns_jobs_newest_first(client) -> None:
+    first = _upload(client, filename="first.wav").json()["job_id"]
+    second = _upload(client, filename="second.wav").json()["job_id"]
+
+    body = client.get("/api/v1/jobs").json()
+
+    assert [job["job_id"] for job in body] == [second, first]
+    assert body[0]["source"]["filename"] == "second.wav"
+
+
+def test_list_is_empty_when_nothing_was_uploaded(client) -> None:
+    assert client.get("/api/v1/jobs").json() == []
+
+
+def test_list_respects_the_limit(client) -> None:
+    for index in range(3):
+        _upload(client, filename=f"recording-{index}.wav")
+
+    assert len(client.get("/api/v1/jobs", params={"limit": 2}).json()) == 2
+
+
+def test_list_rejects_a_nonsense_limit(client) -> None:
+    assert client.get("/api/v1/jobs", params={"limit": 0}).status_code == 422
+
+
+def test_deleted_job_disappears_from_the_list(client) -> None:
+    kept = _upload(client, filename="kept.wav").json()["job_id"]
+    removed = _upload(client, filename="removed.wav").json()["job_id"]
+
+    client.delete(f"/api/v1/jobs/{removed}")
+
+    assert [job["job_id"] for job in client.get("/api/v1/jobs").json()] == [kept]
+
+
+def test_list_skips_a_record_it_cannot_parse(client, redis) -> None:
+    job_id = _upload(client).json()["job_id"]
+    redis.set("job:broken", b"{not json}")
+
+    assert [job["job_id"] for job in client.get("/api/v1/jobs").json()] == [job_id]

@@ -21,6 +21,9 @@ class JobStatus(StrEnum):
 
 
 TERMINAL_STATUSES = frozenset({JobStatus.COMPLETED, JobStatus.FAILED})
+# Statuses in which the worker is not doing anything yet or any more, so entering one of
+# them must not count as "processing started".
+RESTING_STATUSES = TERMINAL_STATUSES | {JobStatus.QUEUED}
 
 # Progress range owned by each processing stage (SPEC.md §5).
 STAGE_PROGRESS_RANGE: dict[JobStatus, tuple[int, int]] = {
@@ -55,10 +58,24 @@ class Job(BaseModel):
     speaker_count: int | None = None
     created_at: datetime
     updated_at: datetime
+    # When the worker actually picked the job up, and when it stopped. Both are None for
+    # records written before these fields existed, so consumers must handle their absence.
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
 
     @property
     def is_terminal(self) -> bool:
         return self.status in TERMINAL_STATUSES
+
+    @property
+    def processing_seconds(self) -> float | None:
+        """How long the worker spent on this job, excluding time spent queued.
+
+        None while the job is still running, and for jobs that failed before they started.
+        """
+        if self.started_at is None or self.finished_at is None:
+            return None
+        return (self.finished_at - self.started_at).total_seconds()
 
 
 class JobCreatedResponse(BaseModel):

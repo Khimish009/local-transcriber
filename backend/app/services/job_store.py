@@ -1,11 +1,12 @@
 import logging
 import uuid
+from collections.abc import Iterator
 from datetime import UTC, datetime
 
 from redis import Redis
 
 from app.core.errors import AppError, ErrorCode
-from app.schemas.job import Job, JobSource, JobStatus
+from app.schemas.job import RESTING_STATUSES, TERMINAL_STATUSES, Job, JobSource, JobStatus
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,28 @@ class JobStore:
             return None
         return Job.model_validate_json(raw)
 
+    def iter_jobs(self) -> Iterator[Job]:
+        """Every stored job, in no particular order.
+
+        Scans the key space instead of keeping an index. A local instance holds tens of
+        jobs, and a sorted-set index would have to be backfilled for every record written
+        before it existed — not worth it at this scale. Records that no longer parse are
+        skipped rather than crashing the listing.
+        """
+        for key in self._redis.scan_iter(match=f"{JOB_KEY_PREFIX}*", count=100):
+            raw = self._redis.get(key)
+            if raw is None:
+                continue  # expired or deleted between the scan and the read
+            try:
+                yield Job.model_validate_json(raw)
+            except ValueError:
+                logger.warning("unreadable job record", extra={"key": str(key)})
+
+    def list_jobs(self, limit: int | None = None) -> list[Job]:
+        """Jobs newest first — the order the job list is shown in."""
+        jobs = sorted(self.iter_jobs(), key=lambda job: job.created_at, reverse=True)
+        return jobs[:limit] if limit is not None else jobs
+
     def require(self, job_id: str) -> Job:
         job = self.get(job_id)
         if job is None:
@@ -71,16 +94,24 @@ class JobStore:
         error_code: ErrorCode | None = None,
     ) -> Job:
         job = self.require(job_id)
+        now = _now()
         if status is not None:
             job.status = status
             job.current_stage = status
+            # Stamped here rather than in the worker so no code path can forget them:
+            # every transition goes through this method, including a failure recorded by
+            # crash recovery.
+            if job.started_at is None and status not in RESTING_STATUSES:
+                job.started_at = now
+            if status in TERMINAL_STATUSES:
+                job.finished_at = now
         if progress is not None:
             job.progress = max(0, min(100, progress))
         if message is not None:
             job.message = message
         if error_code is not None:
             job.error_code = error_code
-        job.updated_at = _now()
+        job.updated_at = now
         self._persist(job)
         logger.info(
             "job updated",

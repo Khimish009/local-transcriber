@@ -1,15 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 import { HealthPanel } from "@/components/HealthPanel";
-import { JobProgress } from "@/components/JobProgress";
+import { JobList } from "@/components/JobList";
 import { UploadForm, type UploadLimits } from "@/components/UploadForm";
 import { useHealth } from "@/hooks/useHealth";
 
 export function TranscriberApp() {
   const health = useHealth();
-  const [jobId, setJobId] = useState<string | null>(null);
+  const router = useRouter();
 
   const limits: UploadLimits | null = health.data
     ? {
@@ -37,11 +37,10 @@ export function TranscriberApp() {
         </p>
       )}
 
-      {jobId ? (
-        <JobProgress jobId={jobId} onReset={() => setJobId(null)} />
-      ) : (
-        <UploadForm limits={limits} onCreated={setJobId} />
-      )}
+      {/* The job keeps its own URL, so a reload or a shared link still finds the result. */}
+      <UploadForm limits={limits} onCreated={(jobId) => router.push(`/jobs/${jobId}`)} />
+
+      <JobList />
 
       <HealthPanel state={health} />
     </>

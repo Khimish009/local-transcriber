@@ -29,3 +29,23 @@ def delete_job(redis: Redis, store: JobStore, storage: JobStorage, job_id: str) 
     shutil.rmtree(storage.job_dir(job_id), ignore_errors=True)
 
     logger.info("job deleted", extra={"job_id": job_id})
+
+
+def purge_jobs_without_files(store: JobStore, storage: JobStorage) -> list[str]:
+    """Drop finished jobs whose directory is gone. Returns the ids removed.
+
+    Such a record is a lie: the job list shows it as COMPLETED, but its transcript, exports
+    and audio are all missing, so opening it can only produce an error. They accumulate from
+    older runs that deleted files without deleting the record.
+
+    Only terminal jobs are considered. A freshly created job exists in Redis for a moment
+    before its directory does, and purging that would race with the upload.
+    """
+    removed: list[str] = []
+    for job in list(store.iter_jobs()):
+        if not job.is_terminal or storage.job_dir(job.job_id).is_dir():
+            continue
+        store.delete(job.job_id)
+        removed.append(job.job_id)
+        logger.info("purged job record without files", extra={"job_id": job.job_id})
+    return removed

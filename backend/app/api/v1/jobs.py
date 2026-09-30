@@ -3,7 +3,17 @@ import shutil
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Body, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi import (
+    APIRouter,
+    Body,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+)
 from fastapi.responses import FileResponse, StreamingResponse
 from redis.exceptions import RedisError
 
@@ -104,6 +114,15 @@ def _discard(store: JobStoreDep, storage: JobStorageDep, job_id: str) -> None:
         store.delete(job_id)
     except RedisError:
         logger.warning("could not delete job record", extra={"job_id": job_id})
+
+
+@router.get("", response_model=list[Job])
+def list_jobs(
+    store: JobStoreDep,
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
+) -> list[Job]:
+    """T11.1 — every job, newest first, so a result stays reachable after a page reload."""
+    return store.list_jobs(limit)
 
 
 @router.get("/{job_id}", response_model=Job)

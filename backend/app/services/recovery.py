@@ -22,8 +22,7 @@ import logging
 from redis import Redis
 
 from app.core.errors import ErrorCode
-from app.schemas.job import Job
-from app.services.job_store import JOB_KEY_PREFIX, JobStore
+from app.services.job_store import JobStore
 from app.services.queue import cancel_job, is_pending_in_queue
 
 logger = logging.getLogger(__name__)
@@ -31,31 +30,16 @@ logger = logging.getLogger(__name__)
 RECOVERY_MESSAGE = "Обработка прервана: worker перезапустился. Запустите задачу заново."
 
 
-def _job_ids(redis: Redis) -> list[str]:
-    ids: list[str] = []
-    for key in redis.scan_iter(match=f"{JOB_KEY_PREFIX}*", count=100):
-        raw = key.decode("utf-8") if isinstance(key, bytes) else str(key)
-        ids.append(raw[len(JOB_KEY_PREFIX) :])
-    return ids
-
-
-def _load(store: JobStore, job_id: str) -> Job | None:
-    try:
-        return store.get(job_id)
-    except ValueError:
-        # A record written by an older schema — not something to fail a job over.
-        logger.warning("unreadable job record", extra={"job_id": job_id})
-        return None
-
-
 def recover_orphaned_jobs(redis: Redis) -> list[str]:
     """Fail every unfinished job that no longer has a worker behind it. Returns their ids."""
     store = JobStore(redis)
     recovered: list[str] = []
 
-    for job_id in _job_ids(redis):
-        job = _load(store, job_id)
-        if job is None or job.is_terminal:
+    # Materialized before the loop: failing a job rewrites its key, and mutating the key
+    # space during a scan is not something to rely on.
+    for job in list(store.iter_jobs()):
+        job_id = job.job_id
+        if job.is_terminal:
             continue
         if is_pending_in_queue(redis, job_id):
             continue  # still waiting for a worker — it will run normally

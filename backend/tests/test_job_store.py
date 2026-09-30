@@ -79,3 +79,65 @@ def test_delete_removes_record(store) -> None:
     store.delete(job.job_id)
 
     assert store.get(job.job_id) is None
+
+
+# --- processing time (T11.2) --------------------------------------------------
+
+
+def test_timestamps_are_absent_until_the_worker_picks_the_job_up(store) -> None:
+    job = store.create(JobSource(filename="meeting.wav", size_bytes=10))
+
+    assert job.started_at is None
+    assert job.finished_at is None
+    assert job.processing_seconds is None
+
+
+def test_first_processing_stage_stamps_the_start(store) -> None:
+    job = store.create(JobSource(filename="meeting.wav", size_bytes=10))
+
+    started = store.update(job.job_id, status=JobStatus.PREPARING_AUDIO)
+
+    assert started.started_at is not None
+    assert started.finished_at is None
+    assert started.processing_seconds is None, "still running"
+
+
+def test_start_is_stamped_once_and_never_moves(store) -> None:
+    job = store.create(JobSource(filename="meeting.wav", size_bytes=10))
+    first = store.update(job.job_id, status=JobStatus.PREPARING_AUDIO).started_at
+
+    later = store.update(job.job_id, status=JobStatus.TRANSCRIBING)
+
+    assert later.started_at == first
+
+
+def test_completion_stamps_the_finish_and_yields_a_duration(store) -> None:
+    job = store.create(JobSource(filename="meeting.wav", size_bytes=10))
+    store.update(job.job_id, status=JobStatus.DIARIZING)
+
+    done = store.update(job.job_id, status=JobStatus.COMPLETED, progress=100)
+
+    assert done.finished_at is not None
+    assert done.processing_seconds is not None
+    assert done.processing_seconds >= 0
+
+
+def test_failure_also_stamps_the_finish(store) -> None:
+    job = store.create(JobSource(filename="meeting.wav", size_bytes=10))
+    store.update(job.job_id, status=JobStatus.DIARIZING)
+
+    failed = store.fail(job.job_id, "boom")
+
+    assert failed.finished_at is not None
+    assert failed.processing_seconds is not None
+
+
+def test_job_that_never_started_has_no_duration(store) -> None:
+    """Crash recovery can fail a job that was still sitting in the queue."""
+    job = store.create(JobSource(filename="meeting.wav", size_bytes=10))
+
+    failed = store.fail(job.job_id, "worker crashed")
+
+    assert failed.started_at is None
+    assert failed.finished_at is not None
+    assert failed.processing_seconds is None

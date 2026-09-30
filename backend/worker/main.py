@@ -20,7 +20,10 @@ from app.core.config import Settings, get_settings
 from app.core.errors import AppError
 from app.core.logging import configure_logging
 from app.core.redis import get_redis
+from app.services.cleanup import purge_jobs_without_files
+from app.services.job_store import JobStore
 from app.services.recovery import recover_orphaned_jobs
+from app.services.storage import JobStorage
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +100,15 @@ def main() -> None:
         logger.warning(
             "orphaned jobs failed after restart",
             extra={"stage": "startup", "count": len(orphaned)},
+        )
+
+    # Records whose files were removed can never be opened again — they only clutter the
+    # job list with results that are not there (T11.1).
+    purged = purge_jobs_without_files(JobStore(redis), JobStorage(settings.data_dir))
+    if purged:
+        logger.info(
+            "purged job records without files",
+            extra={"stage": "startup", "count": len(purged)},
         )
 
     warm_up_models(settings)

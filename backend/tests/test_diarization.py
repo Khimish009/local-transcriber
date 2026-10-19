@@ -215,3 +215,16 @@ def test_app_error_from_the_callback_is_not_a_diarization_failure(normalized_wav
         run_diarization(normalized_wav, ReportingPipeline(), on_progress=gone)
 
     assert exc.value.code is ErrorCode.JOB_NOT_FOUND
+
+
+def test_any_callback_error_passes_through_unchanged(normalized_wav) -> None:
+    """A Redis blip in a progress update is not something the recording did."""
+
+    class RedisDown(ConnectionError):
+        pass
+
+    def broken(_done: float) -> None:
+        raise RedisDown("redis is gone")
+
+    with pytest.raises(RedisDown):
+        run_diarization(normalized_wav, ReportingPipeline(), on_progress=broken)

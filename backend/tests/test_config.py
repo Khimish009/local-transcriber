@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import pydantic
+import pytest
+
 from app.core.config import Settings
 
 
@@ -63,9 +66,6 @@ def test_torch_threads_default_to_torch_itself(monkeypatch) -> None:
 
 
 def test_torch_threads_must_be_positive(monkeypatch) -> None:
-    import pydantic
-    import pytest
-
     monkeypatch.setenv("TORCH_NUM_THREADS", "0")
 
     with pytest.raises(pydantic.ValidationError):

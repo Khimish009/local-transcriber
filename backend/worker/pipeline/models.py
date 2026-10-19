@@ -7,6 +7,7 @@ environment only and is never logged or returned through the API.
 
 import logging
 import os
+import sys
 from typing import Any
 
 from app.core.config import Settings
@@ -53,6 +54,12 @@ def configure_torch_threads(settings: Settings) -> None:
     if threads is None:
         return
 
+    if "torch" in sys.modules:
+        # Something imported torch at module level: OpenMP has already read its settings.
+        logger.warning(
+            "torch was imported before TORCH_NUM_THREADS was applied; convolutions may ignore it",
+            extra={"stage": "startup", "threads": threads},
+        )
     os.environ["OMP_NUM_THREADS"] = str(threads)
     try:
         import torch

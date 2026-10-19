@@ -1,3 +1,5 @@
+import importlib.abc
+import importlib.machinery
 import logging
 import os
 import sys
@@ -276,28 +278,61 @@ def test_asr_without_gigaam_installed_is_reported(settings, monkeypatch) -> None
 # --- torch threads (T12.3) -----------------------------------------------------
 
 
+class _FakeTorchFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+    """Serves a fake `torch` on import and records OMP_NUM_THREADS at that moment."""
+
+    def __init__(self) -> None:
+        self.threads: list[int] = []
+        self.omp_at_import: str | None = None
+
+    def find_spec(self, name, path=None, target=None):
+        if name != "torch":
+            return None
+        return importlib.machinery.ModuleSpec(name, self)
+
+    def create_module(self, spec):
+        return None
+
+    def exec_module(self, module) -> None:
+        self.omp_at_import = os.environ.get("OMP_NUM_THREADS")
+        module.set_num_threads = self.threads.append
+
+
 @pytest.fixture
 def thread_torch(monkeypatch):
-    calls: list[int] = []
-    torch = types.ModuleType("torch")
-    torch.set_num_threads = calls.append
-    monkeypatch.setitem(sys.modules, "torch", torch)
+    """torch is not imported yet, exactly as in a freshly started worker."""
+    finder = _FakeTorchFinder()
+    monkeypatch.delitem(sys.modules, "torch", raising=False)
+    monkeypatch.setattr(sys, "meta_path", [finder, *sys.meta_path])
     # setenv first, so that monkeypatch also removes the variable the code under test sets.
     monkeypatch.setenv("OMP_NUM_THREADS", "")
     monkeypatch.delenv("OMP_NUM_THREADS")
-    return calls
+    yield finder
+    sys.modules.pop("torch", None)
 
 
 def test_torch_threads_are_left_alone_by_default(settings, thread_torch) -> None:
-    models.configure_torch_threads(settings)
+    models.configure_torch_threads(settings.model_copy(update={"torch_num_threads": None}))
 
-    assert thread_torch == []
+    assert "torch" not in sys.modules, "nothing to configure, nothing to import"
     assert "OMP_NUM_THREADS" not in os.environ
 
 
-def test_torch_threads_reach_openmp_and_torch(settings, thread_torch) -> None:
+def test_omp_threads_are_set_before_torch_starts(settings, thread_torch) -> None:
     """OMP_NUM_THREADS covers the convolution pool, which set_num_threads cannot resize."""
     models.configure_torch_threads(settings.model_copy(update={"torch_num_threads": 8}))
 
-    assert os.environ["OMP_NUM_THREADS"] == "8"
-    assert thread_torch == [8]
+    assert thread_torch.omp_at_import == "8"
+    assert thread_torch.threads == [8]
+
+
+def test_torch_imported_too_early_is_reported(settings, monkeypatch, caplog) -> None:
+    torch = types.ModuleType("torch")
+    torch.set_num_threads = lambda threads: None
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    monkeypatch.setenv("OMP_NUM_THREADS", "")
+
+    with caplog.at_level(logging.WARNING):
+        models.configure_torch_threads(settings.model_copy(update={"torch_num_threads": 8}))
+
+    assert "imported before TORCH_NUM_THREADS" in caplog.text

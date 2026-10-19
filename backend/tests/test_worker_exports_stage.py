@@ -105,7 +105,9 @@ def test_export_failure_marks_the_job(worker_env, store, monkeypatch) -> None:
     job = store.get(job_id)
     assert job.status is JobStatus.FAILED
     assert job.error_code is ErrorCode.EXPORT_FAILED
-    assert job.progress >= 92, "failure happened inside the exports window"
+    assert job.progress >= STAGE_PROGRESS_RANGE[JobStatus.GENERATING_EXPORTS][0], (
+        "failure happened inside the exports window"
+    )
 
 
 def test_configured_font_reaches_the_stage(

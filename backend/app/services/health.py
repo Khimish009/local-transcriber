@@ -81,8 +81,8 @@ def check_models(settings: Settings) -> ModelsHealth:
         )
     if not is_asr_model_cached(settings):
         missing.append(
-            f"GigaAM '{settings.asr_model}' is not downloaded yet — it is fetched on the "
-            "first transcription job"
+            f"GigaAM '{settings.asr_model}' is not downloaded yet — the worker fetches it "
+            "when it starts"
         )
 
     if missing:

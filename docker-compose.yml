@@ -82,8 +82,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      # Generous: the worker loads ML models before it starts accepting jobs.
-      start_period: 300s
+      # Generous: the worker loads both ML models before it starts accepting jobs, and on
+      # a fresh install that includes downloading ~460 MB of weights.
+      start_period: 600s
     restart: unless-stopped
 
   frontend:

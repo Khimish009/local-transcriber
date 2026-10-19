@@ -83,20 +83,21 @@ def diarize(job_id: str, store: JobStore, storage: JobStorage, settings: Setting
         message="Разделение по спикерам",
     )
 
-    reported = -1
+    reported = stage_progress(stage, DIARIZATION_MODEL_LOAD_SHARE, 1)
 
     def report(done: float) -> None:
-        # pyannote calls this once per batch; Redis only hears about whole percents.
+        # pyannote calls this once per batch (~140 times on 37 min); Redis only hears about
+        # a move of the bar itself, which is all the UI shows while the job runs.
         nonlocal reported
-        percent = round(done * 100)
-        if percent == reported:
-            return
-        reported = percent
         share = DIARIZATION_MODEL_LOAD_SHARE + (1 - DIARIZATION_MODEL_LOAD_SHARE) * done
+        progress = stage_progress(stage, share, 1)
+        if progress == reported:
+            return
+        reported = progress
         store.update(
             job_id,
-            progress=stage_progress(stage, share, 1),
-            message=f"Разделение по спикерам: {percent}%",
+            progress=progress,
+            message=f"Разделение по спикерам: {round(done * 100)}%",
         )
 
     job = store.require(job_id)

@@ -28,6 +28,18 @@ EMBEDDINGS_END = 0.96
 DiarizationProgress = Callable[[float], None]
 
 
+class _ProgressFailed(Exception):
+    """Carries an error raised by the progress callback out of pyannote, untouched.
+
+    Without it a Redis blip or a deleted job inside the callback would surface as
+    DIARIZATION_FAILED — a code the recording did not earn.
+    """
+
+    def __init__(self, error: Exception) -> None:
+        super().__init__(str(error))
+        self.error = error
+
+
 def progress_hook(on_progress: DiarizationProgress) -> Callable[..., None]:
     """Turn pyannote's `hook` calls into a single fraction of the whole diarization.
 
@@ -47,9 +59,15 @@ def progress_hook(on_progress: DiarizationProgress) -> Callable[..., None]:
             return
         done = min(1.0, completed / total)
         if step_name == "segmentation":
-            on_progress(SEGMENTATION_END * done)
+            fraction = SEGMENTATION_END * done
         elif step_name == "embeddings":
-            on_progress(SEGMENTATION_END + (EMBEDDINGS_END - SEGMENTATION_END) * done)
+            fraction = SEGMENTATION_END + (EMBEDDINGS_END - SEGMENTATION_END) * done
+        else:
+            return
+        try:
+            on_progress(fraction)
+        except Exception as exc:
+            raise _ProgressFailed(exc) from exc
 
     return hook
 
@@ -88,7 +106,8 @@ def run_diarization(
 
     `speaker_count` is the exact number of speakers when the user knows it, otherwise the
     pipeline decides on its own (SPEC.md §3.2). `on_progress` is called from inside the
-    pipeline; an `AppError` it raises (the job was deleted) stops it and passes through.
+    pipeline; whatever it raises (JOB_NOT_FOUND for a deleted job, a Redis error) stops the
+    pipeline and passes through unchanged.
     """
     if not audio_path.is_file():
         raise AppError(ErrorCode.DIARIZATION_FAILED, "Normalized audio is missing")
@@ -101,8 +120,8 @@ def run_diarization(
 
     try:
         output = pipeline(str(audio_path), **kwargs)
-    except AppError:
-        raise
+    except _ProgressFailed as failure:
+        raise failure.error from None
     except Exception as exc:
         logger.exception("diarization failed", extra={"stage": "diarization"})
         raise AppError(

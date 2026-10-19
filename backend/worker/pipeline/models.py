@@ -28,14 +28,16 @@ _pipeline_cache: dict[str, Any] = {}
 _asr_cache: dict[str, Any] = {}
 
 
-def _disable_telemetry() -> None:
+def disable_telemetry() -> None:
     """Nothing about what is processed here may leave the machine (AGENTS.md rule 1, T13.1).
 
     pyannote.audio 4 reports every model and pipeline load, and every processed file with
     its duration and speaker count, to otel.pyannote.ai unless PYANNOTE_METRICS_ENABLED is
     off. HF_HUB_OFFLINE does not cover it. Both flags are forced rather than defaulted, so a
     stray value in the environment cannot switch reporting back on. pyannote reads its flag
-    on every report, so this holds whether or not it is already imported.
+    on every report, so that one holds whatever the import order; huggingface_hub reads its
+    flags once, when it is imported, so those must be set before anything imports it. The
+    worker calls this first thing at startup, and again before every model load.
     """
     os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
     os.environ["PYANNOTE_METRICS_ENABLED"] = "false"
@@ -46,7 +48,7 @@ def _prepare_hf_environment(settings: Settings, cached: bool) -> None:
     cache_dir.mkdir(parents=True, exist_ok=True)
     os.environ["HF_HOME"] = str(settings.models_dir)
     os.environ["HF_HUB_CACHE"] = str(cache_dir)
-    _disable_telemetry()
+    disable_telemetry()
     if cached:
         # Weights are present: never reach out to the network during inference.
         os.environ["HF_HUB_OFFLINE"] = "1"

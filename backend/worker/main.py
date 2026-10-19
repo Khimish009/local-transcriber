@@ -127,9 +127,11 @@ def main() -> None:
             extra={"stage": "startup", "count": len(purged)},
         )
 
-    # Before anything imports torch: the thread pool size is fixed when torch starts.
-    from worker.pipeline.models import configure_torch_threads
+    # Before anything imports torch, pyannote or huggingface_hub: the thread pool size and
+    # the HF flags are read once, at import.
+    from worker.pipeline.models import configure_torch_threads, disable_telemetry
 
+    disable_telemetry()
     configure_torch_threads(settings)
     warm_up_models(settings)
 

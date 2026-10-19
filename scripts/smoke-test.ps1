@@ -1,8 +1,10 @@
 # Phase 0 smoke test (Windows): verifies that the running stack answers on both ports.
 $ErrorActionPreference = "Stop"
 
-$ApiUrl = if ($env:API_URL) { $env:API_URL } else { "http://localhost:8000" }
-$WebUrl = if ($env:WEB_URL) { $env:WEB_URL } else { "http://localhost:3000" }
+# 127.0.0.1 rather than localhost: the ports are published on IPv4 loopback only (T13.2),
+# and `localhost` may try ::1 first.
+$ApiUrl = if ($env:API_URL) { $env:API_URL } else { "http://127.0.0.1:8000" }
+$WebUrl = if ($env:WEB_URL) { $env:WEB_URL } else { "http://127.0.0.1:3000" }
 
 Write-Host "==> API $ApiUrl/api/v1/health"
 $health = Invoke-RestMethod -Uri "$ApiUrl/api/v1/health" -TimeoutSec 10

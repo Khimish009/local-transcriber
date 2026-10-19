@@ -2,8 +2,9 @@
 # Phase 0 smoke test: verifies that the running stack answers on both ports.
 set -euo pipefail
 
-API_URL="${API_URL:-http://localhost:8000}"
-WEB_URL="${WEB_URL:-http://localhost:3000}"
+# 127.0.0.1 rather than localhost: the ports are published on IPv4 loopback only (T13.2).
+API_URL="${API_URL:-http://127.0.0.1:8000}"
+WEB_URL="${WEB_URL:-http://127.0.0.1:3000}"
 
 echo "==> API ${API_URL}/api/v1/health"
 health=$(curl -fsS "${API_URL}/api/v1/health")

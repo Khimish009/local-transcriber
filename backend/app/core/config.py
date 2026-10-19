@@ -68,9 +68,10 @@ class Settings(BaseSettings):
     # /health and the container healthcheck recover quickly after a Redis restart.
     worker_heartbeat_seconds: int = 60
 
-    # NoDecode: CORS_ORIGINS is a comma-separated string, not JSON.
+    # NoDecode: CORS_ORIGINS is a comma-separated string, not JSON. Both spellings of the
+    # loopback UI: `docker compose ps` shows the port as 127.0.0.1:3000 (T13.2).
     cors_origins: Annotated[list[str], NoDecode] = Field(
-        default_factory=lambda: ["http://localhost:3000"]
+        default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000"]
     )
 
     @property

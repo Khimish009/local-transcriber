@@ -42,7 +42,7 @@ services:
       <<: *backend-env
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-2048}
       ALLOWED_EXTENSIONS: ${ALLOWED_EXTENSIONS:-wav,mp3,m4a,mp4,webm,ogg}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
     volumes:
       - ./data:/data
       - ./models:/models

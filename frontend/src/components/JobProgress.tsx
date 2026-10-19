@@ -32,8 +32,11 @@ function describeTiming(job: Job, receivedAt: number, now: number, stalled: bool
   // No speed estimate while it runs: progress is not linear in audio time across stages,
   // so any "×N faster than realtime" shown mid-job would be made up.
   if (!TERMINAL_STATUSES.has(job.status)) {
+    // No duration for a stalled job: the server measures up to "now", so the figure would
+    // absorb all the downtime since the crash and keep growing with every poll. The last
+    // update is a server stamp, the one fact known for sure.
     return stalled
-      ? `Остановилась после ${formatElapsed(spent.seconds)}: worker недоступен`
+      ? `Последнее обновление в ${formatClock(job.updated_at)}: worker недоступен`
       : `Идёт ${formatElapsed(spent.seconds)}`;
   }
 
@@ -48,6 +51,15 @@ function describeTiming(job: Job, receivedAt: number, now: number, stalled: bool
     ? " — вместе с ожиданием в очереди"
     : compareToRecording(job, spent.seconds);
   return `${verb} ${formatElapsed(spent.seconds)}${note}`;
+}
+
+function formatClock(iso: string): string {
+  return new Date(iso).toLocaleString("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 const RATIO_FORMAT = new Intl.NumberFormat("ru-RU", {

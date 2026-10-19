@@ -122,7 +122,8 @@ def test_asr_failure_marks_the_job(worker_env, store, monkeypatch) -> None:
     job = store.get(job_id)
     assert job.status is JobStatus.FAILED
     assert job.error_code is ErrorCode.ASR_FAILED
-    assert 30 <= job.progress < 85, "failure happened inside the ASR progress window"
+    start, end = STAGE_PROGRESS_RANGE[JobStatus.TRANSCRIBING]
+    assert start <= job.progress < end, "failure happened inside the ASR progress window"
 
 
 def test_model_load_failure_marks_the_job(worker_env, store, monkeypatch) -> None:

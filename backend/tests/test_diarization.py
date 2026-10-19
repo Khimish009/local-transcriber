@@ -5,7 +5,12 @@ import pytest
 
 from app.core.errors import AppError, ErrorCode
 from app.schemas.diarization import DiarizationResult
-from worker.pipeline.diarization import annotation_to_segments, run_diarization
+from worker.pipeline.diarization import (
+    EMBEDDINGS_END,
+    SEGMENTATION_END,
+    annotation_to_segments,
+    run_diarization,
+)
 
 
 @dataclass
@@ -42,6 +47,29 @@ class FakePipeline:
         if self.raises is not None:
             raise self.raises
         return self.output
+
+
+class ReportingPipeline(FakePipeline):
+    """Calls `hook` the way pyannote does: per segmentation batch, then per embedding batch."""
+
+    def __init__(self, batches: int = 4, output=None) -> None:
+        super().__init__(output or FakeOutput(FakeAnnotation(REGULAR), FakeAnnotation(EXCLUSIVE)))
+        self.batches = batches
+        self.steps = 2 * batches
+        self.reported = 0
+
+    def __call__(self, path, **kwargs):
+        hook = kwargs.get("hook")
+        if hook is not None:
+            # Segmentation overshoots `total` on its last batch, as pyannote's does.
+            for done in range(1, self.batches + 1):
+                self.reported += 1
+                hook("segmentation", None, file=path, total=self.batches, completed=done + 1)
+            hook("segmentation", "artifact", file=path)
+            for done in range(1, self.batches + 1):
+                self.reported += 1
+                hook("embeddings", None, file=path, total=self.batches, completed=done)
+        return super().__call__(path, **kwargs)
 
 
 REGULAR = [(0.0, 3.4, "SPEAKER_00"), (3.0, 6.2, "SPEAKER_01"), (6.5, 9.0, "SPEAKER_00")]
@@ -155,3 +183,35 @@ def test_result_serializes_to_json(normalized_wav) -> None:
 
     assert set(payload) == {"engine", "model", "speakers", "segments", "exclusive"}
     assert payload["segments"][0]["speaker_id"] == "SPEAKER_00"
+
+
+def test_progress_covers_segmentation_then_embeddings(normalized_wav) -> None:
+    seen: list[float] = []
+
+    run_diarization(normalized_wav, ReportingPipeline(batches=4), on_progress=seen.append)
+
+    assert seen == sorted(seen)
+    assert seen[3] == pytest.approx(SEGMENTATION_END), "overshoot is clamped to the step end"
+    assert seen[-1] == pytest.approx(EMBEDDINGS_END)
+    assert all(0 < value <= 1 for value in seen)
+
+
+def test_no_hook_without_a_progress_callback(normalized_wav) -> None:
+    pipeline = ReportingPipeline()
+
+    run_diarization(normalized_wav, pipeline)
+
+    assert "hook" not in pipeline.calls[0]
+    assert pipeline.reported == 0
+
+
+def test_app_error_from_the_callback_is_not_a_diarization_failure(normalized_wav) -> None:
+    """A deleted job raises JOB_NOT_FOUND from the progress update; it must stay that."""
+
+    def gone(_done: float) -> None:
+        raise AppError(ErrorCode.JOB_NOT_FOUND, "Job not found")
+
+    with pytest.raises(AppError) as exc:
+        run_diarization(normalized_wav, ReportingPipeline(), on_progress=gone)
+
+    assert exc.value.code is ErrorCode.JOB_NOT_FOUND

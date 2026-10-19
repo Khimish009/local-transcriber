@@ -36,6 +36,8 @@ PROCESSING_STAGES: tuple[JobStatus, ...] = (
 
 # Share of the TRANSCRIBING window spent loading the model before the first chunk runs.
 ASR_MODEL_LOAD_SHARE = 0.03
+# The same for DIARIZING. Both models are warmed up at worker start, so this is small.
+DIARIZATION_MODEL_LOAD_SHARE = 0.02
 
 
 def stage_progress(stage: JobStatus, step: float, steps: float) -> int:
@@ -69,25 +71,46 @@ def diarize(job_id: str, store: JobStore, storage: JobStorage, settings: Setting
     store.update(
         job_id,
         status=stage,
-        progress=stage_progress(stage, 0, 3),
+        progress=stage_progress(stage, 0, 1),
         message="Загрузка модели диаризации",
     )
 
     # Loaded once per worker process and reused by every later job.
     pipeline = get_diarization_pipeline(settings, settings.hf_token)
-    store.update(job_id, progress=stage_progress(stage, 1, 3), message="Разделение по спикерам")
+    store.update(
+        job_id,
+        progress=stage_progress(stage, DIARIZATION_MODEL_LOAD_SHARE, 1),
+        message="Разделение по спикерам",
+    )
+
+    reported = -1
+
+    def report(done: float) -> None:
+        # pyannote calls this once per batch; Redis only hears about whole percents.
+        nonlocal reported
+        percent = round(done * 100)
+        if percent == reported:
+            return
+        reported = percent
+        share = DIARIZATION_MODEL_LOAD_SHARE + (1 - DIARIZATION_MODEL_LOAD_SHARE) * done
+        store.update(
+            job_id,
+            progress=stage_progress(stage, share, 1),
+            message=f"Разделение по спикерам: {percent}%",
+        )
 
     job = store.require(job_id)
     result = run_diarization(
         storage.normalized_path(job_id),
         pipeline,
         speaker_count=job.speaker_count,
+        on_progress=report,
     )
 
     storage.diarization_path(job_id).write_text(result.model_dump_json(indent=2), encoding="utf-8")
     store.update(
         job_id,
-        progress=stage_progress(stage, 3, 3),
+        progress=stage_progress(stage, 1, 1),
         message=f"Найдено спикеров: {len(result.speakers)}",
     )
 

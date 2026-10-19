@@ -236,14 +236,14 @@ FAILED
 
 ### Progress
 
-Пример весов:
+Веса пропорциональны измеренному времени стадий (запись 37 мин на CPU, T12.4):
 
 ```text
-PREPARING_AUDIO       0–5
-DIARIZING             5–30
-TRANSCRIBING         30–85
-ALIGNING             85–92
-GENERATING_EXPORTS   92–100
+PREPARING_AUDIO       0–2
+DIARIZING             2–74
+TRANSCRIBING         74–98
+ALIGNING             98–99
+GENERATING_EXPORTS   99–100
 ```
 
 Во время ASR рассчитывать реальный progress:
@@ -251,6 +251,9 @@ GENERATING_EXPORTS   92–100
 ```text
 processed_audio_duration / total_audio_duration
 ```
+
+Во время диаризации — по шагам pyannote (`hook`): сегментация и эмбеддинги отчитываются
+о каждом батче.
 
 ---
 

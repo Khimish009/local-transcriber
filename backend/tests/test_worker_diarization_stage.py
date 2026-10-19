@@ -3,8 +3,15 @@ import json
 import pytest
 
 from app.core.errors import AppError, ErrorCode
-from app.schemas.job import JobSource, JobStatus
-from tests.test_diarization import EXCLUSIVE, REGULAR, FakeAnnotation, FakeOutput, FakePipeline
+from app.schemas.job import STAGE_PROGRESS_RANGE, JobSource, JobStatus
+from tests.test_diarization import (
+    EXCLUSIVE,
+    REGULAR,
+    FakeAnnotation,
+    FakeOutput,
+    FakePipeline,
+    ReportingPipeline,
+)
 from worker.jobs import process_job
 
 
@@ -71,7 +78,8 @@ def test_missing_hf_token_fails_the_job(worker_env, store, monkeypatch) -> None:
     job = store.get(job_id)
     assert job.status is JobStatus.FAILED
     assert job.error_code is ErrorCode.HF_TOKEN_REQUIRED
-    assert 5 <= job.progress < 30, "failure happened inside the diarization progress window"
+    start, end = STAGE_PROGRESS_RANGE[JobStatus.DIARIZING]
+    assert start <= job.progress < end, "failure happened inside the diarization progress window"
 
 
 def test_diarization_failure_marks_the_job(worker_env, store, monkeypatch) -> None:
@@ -82,3 +90,50 @@ def test_diarization_failure_marks_the_job(worker_env, store, monkeypatch) -> No
         process_job(job_id)
 
     assert store.get(job_id).error_code is ErrorCode.DIARIZATION_FAILED
+
+
+def test_progress_follows_pyannote_steps(worker_env, store, monkeypatch) -> None:
+    """T12.4 — the bar moves during diarization instead of sitting still for most of it."""
+    install_pipeline(monkeypatch, ReportingPipeline(batches=10))
+    job_id = make_job(store)
+    start, end = STAGE_PROGRESS_RANGE[JobStatus.DIARIZING]
+    seen: list[tuple[int, str]] = []
+    original = store.__class__.update
+
+    def record(self, job_id_, **kwargs):
+        job = original(self, job_id_, **kwargs)
+        if job.status is JobStatus.DIARIZING:
+            seen.append((job.progress, job.message))
+        return job
+
+    monkeypatch.setattr(store.__class__, "update", record)
+
+    process_job(job_id)
+
+    progress = [value for value, _ in seen]
+    assert progress[0] == start
+    assert progress[-1] == end
+    assert progress == sorted(progress)
+    assert len(set(progress)) > 10, "progress must reflect pyannote's batches"
+    messages = [message for _, message in seen]
+    assert len(messages) == len(set(messages)), "repeated percents must not reach Redis"
+
+
+def test_deleting_the_job_stops_diarization_midway(worker_env, store, monkeypatch) -> None:
+    """The progress update is the first moment the worker learns the job is gone."""
+    pipeline = ReportingPipeline(batches=10)
+    install_pipeline(monkeypatch, pipeline)
+    job_id = make_job(store)
+    original = store.__class__.update
+
+    def vanish(self, job_id_, **kwargs):
+        if (kwargs.get("message") or "").endswith("%"):
+            self.delete(job_id_)
+        return original(self, job_id_, **kwargs)
+
+    monkeypatch.setattr(store.__class__, "update", vanish)
+
+    process_job(job_id)  # must not raise: the user asked to forget this job
+
+    assert store.get(job_id) is None
+    assert pipeline.reported < pipeline.steps, "pyannote must stop at the first update"

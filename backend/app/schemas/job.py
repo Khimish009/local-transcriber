@@ -26,13 +26,16 @@ TERMINAL_STATUSES = frozenset({JobStatus.COMPLETED, JobStatus.FAILED})
 RESTING_STATUSES = TERMINAL_STATUSES | {JobStatus.QUEUED}
 
 # Progress range owned by each processing stage (SPEC.md §5).
+# Proportional to measured stage time (T12.4): a 37-min recording on CPU after T12.1/T12.2
+# spends ~1% preparing audio, ~72% diarizing, ~26% recognizing and ~1% on the rest. The
+# bar used to give diarization 25% and then sit still for most of the job.
 STAGE_PROGRESS_RANGE: dict[JobStatus, tuple[int, int]] = {
     JobStatus.QUEUED: (0, 0),
-    JobStatus.PREPARING_AUDIO: (0, 5),
-    JobStatus.DIARIZING: (5, 30),
-    JobStatus.TRANSCRIBING: (30, 85),
-    JobStatus.ALIGNING: (85, 92),
-    JobStatus.GENERATING_EXPORTS: (92, 100),
+    JobStatus.PREPARING_AUDIO: (0, 2),
+    JobStatus.DIARIZING: (2, 74),
+    JobStatus.TRANSCRIBING: (74, 98),
+    JobStatus.ALIGNING: (98, 99),
+    JobStatus.GENERATING_EXPORTS: (99, 100),
     JobStatus.COMPLETED: (100, 100),
 }
 

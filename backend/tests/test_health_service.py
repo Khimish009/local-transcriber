@@ -9,19 +9,7 @@ from app.services.health import (
     check_redis,
     check_workers,
 )
-from app.services.model_cache import DIARIZATION_MODEL, asr_checkpoint_path, repo_cache_dir
-
-
-def cache_diarization(settings) -> None:
-    snapshot = repo_cache_dir(settings, DIARIZATION_MODEL) / "snapshots" / "abc"
-    snapshot.mkdir(parents=True)
-    (snapshot / "config.yaml").write_text("fake")
-
-
-def cache_asr(settings) -> None:
-    path = asr_checkpoint_path(settings)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(b"ckpt")
+from tests.model_files import cache_asr, cache_diarization
 
 
 def test_check_redis_ok(redis) -> None:

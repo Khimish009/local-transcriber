@@ -5,17 +5,13 @@ import logging
 import pytest
 
 from app.core.errors import AppError, ErrorCode
-from app.services.model_cache import DIARIZATION_MODEL, asr_checkpoint_path, repo_cache_dir
+from tests.model_files import cache_asr, cache_diarization
 from worker import fetch_models as service
 
 
 def cache_everything(settings) -> None:
-    snapshot = repo_cache_dir(settings, DIARIZATION_MODEL) / "snapshots" / "abc123"
-    snapshot.mkdir(parents=True)
-    (snapshot / "config.yaml").write_text("fake")
-    checkpoint = asr_checkpoint_path(settings)
-    checkpoint.parent.mkdir(parents=True)
-    checkpoint.write_bytes(b"weights")
+    cache_diarization(settings)
+    cache_asr(settings)
 
 
 @pytest.fixture
@@ -74,3 +70,21 @@ def test_service_exits_cleanly_even_when_a_model_is_missing(monkeypatch) -> None
     monkeypatch.setattr(service, "configure_logging", lambda: None)
 
     assert service.main() == 0
+
+
+def test_sigterm_ends_a_download_as_a_clean_exit(monkeypatch) -> None:
+    """Raised as SystemExit, the signal lets gigaam remove a half-written checkpoint."""
+    import signal
+
+    installed = {}
+    monkeypatch.setattr(
+        signal, "signal", lambda signum, handler: installed.update({signum: handler})
+    )
+    monkeypatch.setattr(service, "fetch_models", lambda settings: [])
+    monkeypatch.setattr(service, "configure_logging", lambda: None)
+
+    service.main()
+
+    with pytest.raises(SystemExit) as exc:
+        installed[signal.SIGTERM](signal.SIGTERM, None)
+    assert exc.value.code == 128 + signal.SIGTERM

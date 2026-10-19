@@ -12,13 +12,13 @@ change.
 """
 
 import contextlib
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Collection
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from python_multipart.exceptions import FormParserError
-from python_multipart.multipart import MultipartParser, parse_options_header
+from python_multipart.multipart import MultipartParser, MultipartState, parse_options_header
 from starlette.concurrency import run_in_threadpool
 
 from app.core.errors import AppError, ErrorCode
@@ -27,7 +27,8 @@ FILE_FIELD = "file"
 # Boundaries and part headers on top of the file itself. A declared body longer than the
 # limit plus this cannot hold a file within the limit.
 MULTIPART_OVERHEAD_BYTES = 64 * 1024
-# Plain fields are tiny (`speaker_count`); a longer one is not a legitimate request.
+# The plain fields the endpoint reads are tiny (`speaker_count`); a longer one is not a
+# legitimate request. Fields it does not read are skipped unbuffered, however many there are.
 MAX_FIELD_BYTES = 1024
 # File data is written in pieces of about this size from a worker thread, so disk I/O never
 # blocks the event loop that also serves the progress streams.
@@ -172,15 +173,18 @@ async def receive_form(
     *,
     max_file_bytes: int,
     open_file: Callable[[FileHeaders], Path],
+    fields: Collection[str] = (),
 ) -> ReceivedForm:
     """Parse a multipart body as it arrives, writing the `file` part where `open_file` says.
 
     `open_file` is called once, when the file part's headers arrive and before any of its
-    bytes are read: it validates them and returns the destination path. Raises
-    FILE_TOO_LARGE as soon as the file outgrows `max_file_bytes`, `MalformedUpload` for a
-    body that is not valid multipart, `FieldError` for a missing or duplicated file. Other
-    file parts are ignored, as FastAPI ignored unknown fields. The partial file is removed
-    on any failure, whatever raised it.
+    bytes are read: it validates them and returns the destination path. Of the plain parts
+    only those named in `fields` are kept. Raises FILE_TOO_LARGE as soon as the file
+    outgrows `max_file_bytes`, `MalformedUpload` for a body that is not complete, valid
+    multipart, `FieldError` for a missing or duplicated file. Other parts are skipped, as
+    FastAPI ignored unknown fields — but unbuffered: Starlette capped them at a thousand,
+    and a flood of them must not grow memory. The partial file is removed on any failure,
+    whatever raised it.
     """
     media_type, params = parse_options_header(content_type)
     if media_type.lower() != b"multipart/form-data":
@@ -194,12 +198,11 @@ async def receive_form(
         parser = MultipartParser(boundary, reader.callbacks())
     except FormParserError as exc:  # e.g. a boundary longer than RFC 2046 allows
         raise MalformedUpload("Invalid multipart boundary") from exc
-    fields: dict[str, str] = {}
+    received: dict[str, str] = {}
     destination: Path | None = None
     handle = None
     pending = bytearray()
     size = 0
-    file_complete = False
 
     async def flush() -> None:
         if pending:
@@ -224,11 +227,13 @@ async def receive_form(
                                 "input": None,
                             }
                         )
+                    if part.name not in fields:
+                        continue
                     part.data += data
                     if len(part.data) > MAX_FIELD_BYTES:
                         raise MalformedUpload(f'Field "{part.name}" is too long')
                     if kind == "end":
-                        fields[part.name] = _decode(part.data)
+                        received[part.name] = _decode(part.data)
                 elif part.name != FILE_FIELD:
                     continue
                 elif kind == "headers":
@@ -252,13 +257,14 @@ async def receive_form(
                         await flush()
                 else:
                     await flush()
-                    file_complete = True
         parser.finalize()
         if destination is None:
             raise missing_file()
-        if not file_complete:
-            # python-multipart does not object to a body that stops mid-part.
-            raise MalformedUpload("The multipart body ends before the file does")
+        if parser.state != MultipartState.END:
+            # python-multipart does not object to a body that stops early — mid-file, or
+            # after it but before `speaker_count`, which would then be lost without a word.
+            raise MalformedUpload("The multipart body ends before its closing boundary")
+        handle.close()
     except BaseException:
         if handle is not None:
             # A failing close (a full disk) must not hide the original error or keep the
@@ -269,5 +275,4 @@ async def receive_form(
             destination.unlink(missing_ok=True)
         raise
 
-    handle.close()
-    return ReceivedForm(fields=fields, file_size=size)
+    return ReceivedForm(fields=received, file_size=size)

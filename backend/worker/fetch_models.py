@@ -11,8 +11,10 @@ error codes they always had, the UI shows them, and the reason is in this servic
 """
 
 import logging
+import signal
 import sys
 from collections.abc import Callable
+from types import FrameType
 
 from app.core.config import Settings, get_settings
 from app.core.errors import AppError
@@ -62,7 +64,20 @@ def fetch_models(settings: Settings) -> list[str]:
     return missing
 
 
+def _exit_on_sigterm(signum: int, frame: FrameType | None) -> None:
+    """`docker compose stop` during a download must not leave half a checkpoint behind.
+
+    As PID 1 the process ignores SIGTERM unless it handles it, and Docker kills it ten
+    seconds later, mid-file: gigaam writes straight to the final path, and a truncated
+    checkpoint would pass for a downloaded one. Raised as SystemExit, the signal lets gigaam
+    delete the partial file on its way out. Hugging Face downloads into `.incomplete` files
+    and resumes them on the next run.
+    """
+    raise SystemExit(128 + signum)
+
+
 def main() -> int:
+    signal.signal(signal.SIGTERM, _exit_on_sigterm)
     configure_logging()
     missing = fetch_models(get_settings())
     if missing:

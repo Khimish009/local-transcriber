@@ -14,6 +14,7 @@ from app.core.config import Settings
 from app.core.errors import AppError, ErrorCode
 from app.services.model_cache import (
     DIARIZATION_MODEL,
+    DIARIZATION_REVISION,
     gigaam_dir,
     hf_cache_dir,
     is_asr_model_cached,
@@ -142,7 +143,8 @@ def load_diarization_pipeline(settings: Settings, hf_token: str | None) -> Any:
         raise AppError(
             ErrorCode.MODEL_NOT_AVAILABLE,
             "Could not load the diarization model. Check HF_TOKEN and that the model "
-            "terms are accepted on Hugging Face.",
+            "terms are accepted on Hugging Face; the weights are downloaded by the "
+            "`models` service, see `docker compose logs models`.",
         ) from None
 
     if pipeline is None:
@@ -159,9 +161,13 @@ def load_diarization_pipeline(settings: Settings, hf_token: str | None) -> Any:
 def _from_pretrained(pipeline_cls: Any, hf_token: str | None) -> Any:
     """`token` is the pyannote.audio 4.x argument; 3.x still calls it `use_auth_token`."""
     try:
-        return pipeline_cls.from_pretrained(DIARIZATION_MODEL, token=hf_token)
+        return pipeline_cls.from_pretrained(
+            DIARIZATION_MODEL, revision=DIARIZATION_REVISION, token=hf_token
+        )
     except TypeError:
-        return pipeline_cls.from_pretrained(DIARIZATION_MODEL, use_auth_token=hf_token)
+        return pipeline_cls.from_pretrained(
+            DIARIZATION_MODEL, revision=DIARIZATION_REVISION, use_auth_token=hf_token
+        )
 
 
 def get_diarization_pipeline(settings: Settings, hf_token: str | None) -> Any:
@@ -214,12 +220,16 @@ def load_asr_model(settings: Settings) -> Any:
                 "stage": "asr",
                 "model": settings.asr_model,
                 "error_type": type(exc).__name__,
+                # No secrets here, unlike Hugging Face errors, and gigaam's own text is the
+                # useful part: a failed checksum names the file to delete.
+                "detail": str(exc)[:500],
             },
         )
         raise AppError(
             ErrorCode.MODEL_NOT_AVAILABLE,
-            f"Could not load the ASR model '{settings.asr_model}'. Check ASR_MODEL and "
-            "that the weights could be downloaded into MODELS_DIR.",
+            f"Could not load the ASR model '{settings.asr_model}'. Check ASR_MODEL; the "
+            "weights are downloaded into MODELS_DIR by the `models` service, see "
+            "`docker compose logs models`.",
         ) from exc
 
     logger.info("ASR model ready", extra={"stage": "asr", "model": settings.asr_model})

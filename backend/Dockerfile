@@ -19,12 +19,16 @@ WORKDIR /srv
 
 # Exact versions with hashes (T13.3): a clean build installs what was tested, and a file
 # that does not match its hash fails the build. --no-deps because the lock already lists
-# every dependency; requirements.txt holds only the ranges it is generated from.
+# every dependency; requirements.txt holds only the ranges it is generated from, and
+# `pip check` fails the build if the two ever drift apart. --no-build-isolation: a package
+# shipped only as source is built with the setuptools pinned here, not with whatever
+# version pip would fetch for it, unpinned.
 # The pip cache is a BuildKit cache mount, outside every layer: a rebuild after a
 # dependency change downloads only what changed.
 COPY requirements.lock ./
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-deps --require-hashes -r requirements.lock
+    pip install --no-deps --require-hashes --no-build-isolation -r requirements.lock \
+    && pip check
 
 # ---------------------------------------------------------------------------
 # API image: no ML dependencies and no ffmpeg — the API never decodes audio or loads a
@@ -76,10 +80,12 @@ COPY requirements-worker.lock requirements-worker.txt ./
 RUN --mount=type=cache,target=/root/.cache/pip \
     apt-get update \
     && apt-get install -y --no-install-recommends git \
-    && pip install --no-deps --require-hashes -r requirements-worker.lock \
+    && pip install --no-deps --require-hashes --no-build-isolation -r requirements-worker.lock \
         --index-url https://download.pytorch.org/whl/cpu \
         --extra-index-url https://pypi.org/simple \
-    && pip install --no-deps "$(grep -E '^gigaam @ ' requirements-worker.txt)" \
+    && pip install --no-deps --no-build-isolation \
+        "$(grep -E '^gigaam @ ' requirements-worker.txt)" \
+    && pip check \
     && apt-get purge -y --auto-remove git \
     && rm -rf /var/lib/apt/lists/*
 

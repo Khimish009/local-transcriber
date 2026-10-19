@@ -100,7 +100,11 @@ def _speaker_count(raw: str | None) -> int | None:
         return SPEAKER_COUNT.validate_python(raw)
     except ValidationError as exc:
         raise RequestValidationError(
-            [{**error, "loc": ("body", "speaker_count")} for error in exc.errors()]
+            [
+                {**error, "loc": ("body", "speaker_count")}
+                # As FastAPI reports its own validation errors.
+                for error in exc.errors(include_url=False)
+            ]
         ) from None
 
 
@@ -149,6 +153,7 @@ async def create_job(
             request.headers.get("content-type"),
             max_file_bytes=settings.max_upload_bytes,
             open_file=start_job,
+            fields=("speaker_count",),
         )
         if job is None:
             raise missing_file()

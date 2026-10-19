@@ -9,12 +9,16 @@ import pytest
 
 from app.core.errors import AppError, ErrorCode
 from app.services.model_cache import (
+    DIARIZATION_FILES,
     DIARIZATION_MODEL,
+    DIARIZATION_REVISION,
     asr_checkpoint_path,
+    asr_tokenizer_path,
     is_asr_model_cached,
     is_model_cached,
     repo_cache_dir,
 )
+from tests.model_files import cache_asr, cache_diarization
 from worker.pipeline import models
 
 TOKEN = "hf_secrettokenvalue"
@@ -40,9 +44,7 @@ def isolate_hf_env(monkeypatch):
 
 
 def cache_the_model(settings) -> None:
-    snapshot = repo_cache_dir(settings, DIARIZATION_MODEL) / "snapshots" / "abc123"
-    snapshot.mkdir(parents=True)
-    (snapshot / "config.yaml").write_text("fake")
+    cache_diarization(settings)
 
 
 class FakePipeline:
@@ -246,11 +248,50 @@ def fake_gigaam(monkeypatch, fake_ml):
 def test_asr_cache_detection(settings) -> None:
     assert is_asr_model_cached(settings) is False
 
-    path = asr_checkpoint_path(settings)
-    path.parent.mkdir(parents=True)
-    path.write_bytes(b"ckpt")
+    cache_asr(settings)
 
     assert is_asr_model_cached(settings) is True
+
+
+def test_e2e_checkpoint_without_its_tokenizer_is_not_cached(settings) -> None:
+    """T13.5: interrupted between gigaam's two downloads, the worker cannot fetch the rest."""
+    cache_asr(settings, tokenizer=False)
+
+    assert is_asr_model_cached(settings) is False
+
+
+def test_models_without_a_tokenizer_need_only_the_checkpoint(settings) -> None:
+    plain = settings.model_copy(update={"asr_model": "v3_rnnt"})
+
+    cache_asr(plain)
+
+    assert is_asr_model_cached(plain) is True
+    assert not asr_tokenizer_path(plain).exists()
+
+
+def test_partial_diarization_snapshot_is_not_cached(settings) -> None:
+    """A snapshot that lost a file to an interrupted download must be completed first."""
+    cache_diarization(settings, missing=("embedding/pytorch_model.bin",))
+
+    assert is_model_cached(settings) is False
+
+
+def test_another_revision_of_the_model_does_not_count(settings) -> None:
+    """The loader asks for the pinned revision, so only that snapshot can serve it offline."""
+    other = repo_cache_dir(settings, DIARIZATION_MODEL) / "snapshots" / ("0" * 40)
+    for name in DIARIZATION_FILES:
+        (other / name).parent.mkdir(parents=True, exist_ok=True)
+        (other / name).write_text("fake")
+
+    assert is_model_cached(settings) is False
+
+
+def test_loader_asks_for_the_pinned_revision(settings, fake_ml) -> None:
+    cache_the_model(settings)
+
+    models.load_diarization_pipeline(settings, hf_token=None)
+
+    assert fake_ml.last_kwargs["revision"] == DIARIZATION_REVISION
 
 
 def test_asr_short_name_resolves_to_the_v3_checkpoint(settings) -> None:

@@ -24,6 +24,8 @@ from app.services.upload import (
 )
 
 BOUNDARY = "test-boundary-7f3a9c"
+# The plain fields these tests ask `receive_form` to keep; any other name is skipped.
+KEPT_FIELDS = ("speaker_count", "note", "title")
 CONTENT_TYPE = f"multipart/form-data; boundary={BOUNDARY}"
 
 LIMIT = 1024 * 1024  # what the `settings` fixture allows (max_upload_mb=1)
@@ -111,7 +113,9 @@ async def receive(
     chunk_size: int | None = None,
 ) -> ReceivedForm:
     stream = chunks(source, chunk_size) if isinstance(source, bytes) else source
-    return await receive_form(stream, content_type, max_file_bytes=max_file_bytes, open_file=opener)
+    return await receive_form(
+        stream, content_type, max_file_bytes=max_file_bytes, open_file=opener, fields=KEPT_FIELDS
+    )
 
 
 # CRLF and near-misses of the delimiter inside the data: the parser must not cut the file there.
@@ -646,3 +650,29 @@ async def test_failing_close_neither_hides_the_error_nor_keeps_the_partial(tmp_p
         await receive(truncated, Opener(destination))
 
     assert not destination.exists()
+
+
+# --- fields the endpoint does not read (second review) -----------------------------------
+
+
+async def test_fields_not_asked_for_are_skipped_whatever_their_number_or_size(opener) -> None:
+    """Starlette capped fields at a thousand; skipped unbuffered, any number costs no memory."""
+    flood = [Part(f"f{i}", b"x" * MAX_FIELD_BYTES) for i in range(3000)]
+    huge = Part("comment", b"y" * (50 * MAX_FIELD_BYTES))
+    body = multipart_body(*flood, huge, MEETING, Part("speaker_count", b"2"))
+
+    result = await receive(body, opener, chunk_size=PIECE)
+
+    assert result.fields == {"speaker_count": "2"}
+    assert opener.destination.read_bytes() == TRICKY_AUDIO
+
+
+async def test_body_cut_after_the_file_does_not_lose_a_field_silently(opener) -> None:
+    """Cut inside `speaker_count`, the request would otherwise succeed with auto-detection."""
+    body = multipart_body(MEETING, Part("speaker_count", b"2"))
+    cut = body[: body.index(b'name="speaker_count"') + len(b'name="speaker_count"\r\n\r\n')]
+
+    with pytest.raises(MalformedUpload):
+        await receive(cut, opener)
+
+    assert not opener.destination.exists()

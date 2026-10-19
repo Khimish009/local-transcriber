@@ -74,7 +74,7 @@ def check_models(settings: Settings) -> ModelsHealth:
             detail=f"Models directory {settings.models_dir} does not exist",
         )
     missing: list[str] = []
-    if not is_model_cached(settings, DIARIZATION_MODEL):
+    if not is_model_cached(settings):
         missing.append(
             f"{DIARIZATION_MODEL} is not downloaded yet — set HF_TOKEN, accept the model "
             "terms on Hugging Face and run `docker compose up` with internet access"

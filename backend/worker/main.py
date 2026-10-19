@@ -30,7 +30,32 @@ logger = logging.getLogger(__name__)
 
 
 class Heartbeating(Protocol):
+    key: str
+    connection: Any
+
     def heartbeat(self, timeout: int | None = None, pipeline: Any = None) -> None: ...
+
+    def register_birth(self) -> None: ...
+
+
+def refresh_registration(worker: Heartbeating) -> bool:
+    """One keep-alive beat. Returns True if the registration had to be restored first.
+
+    The beats keep the key from expiring only while the process runs. A laptop that sleeps
+    pauses the whole Docker VM, Redis included, and expiry follows the wall clock: on wake
+    Redis drops the key at once. The next heartbeat, ours or RQ's own between jobs, brings
+    it back with `last_heartbeat` alone, and the worker would stay out of /health until a
+    restart (T13.8). So a key without `queues` is rebuilt the way RQ builds it at startup.
+    """
+    restored = False
+    if not worker.connection.hexists(worker.key, "queues"):
+        # register_birth refuses to overwrite a key that looks alive, so drop the stub.
+        worker.connection.delete(worker.key)
+        worker.register_birth()
+        restored = True
+        logger.warning("worker registration restored", extra={"stage": "worker"})
+    worker.heartbeat()
+    return restored
 
 
 def beat_until(worker: Heartbeating, interval: float, stop: threading.Event) -> int:
@@ -45,12 +70,12 @@ def beat_until(worker: Heartbeating, interval: float, stop: threading.Event) -> 
 
     Worse, the loss is permanent. RQ's own `heartbeat()` only writes `last_heartbeat`, so
     once the key has expired it comes back holding that single field — without `queues`.
-    The worker then never matches its own queue again until the process restarts.
+    The worker then never matches its own queue again; `refresh_registration` repairs that.
     """
     beats = 0
     while not stop.wait(interval):
         try:
-            worker.heartbeat()
+            refresh_registration(worker)
             beats += 1
         except Exception:
             # A Redis blip must not take down the worker; the next beat will retry.

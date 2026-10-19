@@ -12,6 +12,7 @@ so it does not stay frozen mid-stage forever.
 
 import logging
 import threading
+from collections.abc import Callable
 from typing import Any, Protocol
 
 from rq import Queue, SimpleWorker
@@ -67,19 +68,34 @@ def start_keepalive(worker: Heartbeating, interval: float) -> threading.Event:
 
 
 def warm_up_models(settings: Settings) -> None:
-    """Load models before the first job. A failure here is not fatal: the job that needs
-    the model fails with a stable error code, and the worker keeps serving the queue."""
-    from worker.pipeline.models import get_diarization_pipeline
+    """Load both models before the first job (T12.5), so no job pays for loading them.
 
-    try:
-        get_diarization_pipeline(settings, settings.hf_token)
-    except AppError as exc:
-        logger.warning(
-            "model warm-up skipped",
-            extra={"stage": "startup", "error_code": exc.code.value, "detail": exc.message},
-        )
-    except Exception:
-        logger.exception("model warm-up failed", extra={"stage": "startup"})
+    A failure here is not fatal: the job that needs the model fails with a stable error
+    code, and the worker keeps serving the queue. Each model is tried on its own — a missing
+    HF_TOKEN must not leave GigaAM cold. On a fresh install this is also when the weights
+    are downloaded, before the worker registers in Redis.
+    """
+    from worker.pipeline.models import get_asr_model, get_diarization_pipeline
+
+    loaders: tuple[tuple[str, Callable[[], object]], ...] = (
+        ("diarization", lambda: get_diarization_pipeline(settings, settings.hf_token)),
+        ("asr", lambda: get_asr_model(settings)),
+    )
+    for model, load in loaders:
+        try:
+            load()
+        except AppError as exc:
+            logger.warning(
+                "model warm-up skipped",
+                extra={
+                    "stage": "startup",
+                    "model": model,
+                    "error_code": exc.code.value,
+                    "detail": exc.message,
+                },
+            )
+        except Exception:
+            logger.exception("model warm-up failed", extra={"stage": "startup", "model": model})
 
 
 def main() -> None:

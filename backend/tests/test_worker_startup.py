@@ -1,23 +1,32 @@
 import logging
 
+import pytest
+
 from app.core.errors import AppError, ErrorCode
 from worker.main import warm_up_models
 
 
-def test_warm_up_loads_the_model_once(settings, monkeypatch) -> None:
-    calls: list[tuple] = []
+@pytest.fixture
+def loads(monkeypatch) -> list[str]:
+    """Records which models warm-up asked for; both loaders succeed by default."""
+    calls: list[str] = []
     monkeypatch.setattr(
         "worker.pipeline.models.get_diarization_pipeline",
-        lambda *args: calls.append(args) or object(),
+        lambda *args: calls.append("diarization") or object(),
     )
+    monkeypatch.setattr(
+        "worker.pipeline.models.get_asr_model", lambda *args: calls.append("asr") or object()
+    )
+    return calls
 
+
+def test_warm_up_loads_both_models_once(settings, loads) -> None:
     warm_up_models(settings)
 
-    assert len(calls) == 1
-    assert calls[0][0] is settings
+    assert loads == ["diarization", "asr"]
 
 
-def test_missing_token_does_not_stop_the_worker(settings, monkeypatch, caplog) -> None:
+def test_missing_token_does_not_stop_the_worker(settings, monkeypatch, loads, caplog) -> None:
     def refuse(*args):
         raise AppError(ErrorCode.HF_TOKEN_REQUIRED, "HF_TOKEN is required")
 
@@ -28,15 +37,18 @@ def test_missing_token_does_not_stop_the_worker(settings, monkeypatch, caplog) -
         warm_up_models(settings)
 
     assert any(getattr(r, "error_code", None) == "HF_TOKEN_REQUIRED" for r in caplog.records)
+    assert loads == ["asr"], "a diarization failure must not leave GigaAM cold"
 
 
-def test_unexpected_error_does_not_stop_the_worker(settings, monkeypatch) -> None:
+def test_unexpected_error_does_not_stop_the_worker(settings, monkeypatch, loads) -> None:
     def boom(*args):
         raise RuntimeError("out of memory")
 
-    monkeypatch.setattr("worker.pipeline.models.get_diarization_pipeline", boom)
+    monkeypatch.setattr("worker.pipeline.models.get_asr_model", boom)
 
     warm_up_models(settings)
+
+    assert loads == ["diarization"]
 
 
 # --- registration keep-alive --------------------------------------------------

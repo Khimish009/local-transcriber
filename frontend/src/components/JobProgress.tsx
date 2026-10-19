@@ -19,17 +19,23 @@ import {
 
 interface Props {
   jobId: string;
+  /** From /health: nobody is processing jobs right now. */
+  workersDown: boolean;
   onReset: () => void;
 }
 
 /** One line about time: how long it is taking, or how long it took. */
-function describeTiming(job: Job, receivedAt: number, now: number): string {
+function describeTiming(job: Job, receivedAt: number, now: number, stalled: boolean): string {
   const spent = processingTime(job, { receivedAt, now });
   if (spent === null) return "";
 
   // No speed estimate while it runs: progress is not linear in audio time across stages,
   // so any "×N faster than realtime" shown mid-job would be made up.
-  if (!TERMINAL_STATUSES.has(job.status)) return `Идёт ${formatElapsed(spent.seconds)}`;
+  if (!TERMINAL_STATUSES.has(job.status)) {
+    return stalled
+      ? `Остановилась после ${formatElapsed(spent.seconds)}: worker недоступен`
+      : `Идёт ${formatElapsed(spent.seconds)}`;
+  }
 
   const verb =
     job.error_code === "WORKER_CRASHED"
@@ -61,7 +67,7 @@ function compareToRecording(job: Job, seconds: number): string {
   return ` — ${direction} записи в ${RATIO_FORMAT.format(factor)} раза`;
 }
 
-export function JobProgress({ jobId, onReset }: Props) {
+export function JobProgress({ jobId, workersDown, onReset }: Props) {
   const { job, receivedAt, error, degraded } = useJob(jobId);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -69,9 +75,11 @@ export function JobProgress({ jobId, onReset }: Props) {
 
   // The running clock ticks on its own: progress events arrive far too irregularly to
   // drive it, and a stalled stage would otherwise freeze the elapsed time. Nothing to tick
-  // while the job is queued: there is no processing time yet, only an empty line.
-  const running =
-    job !== null && job.processing_seconds !== null && !TERMINAL_STATUSES.has(job.status);
+  // while the job is queued: there is no processing time yet, only an empty line. Nor
+  // while the worker is down: a growing counter would pass a dead job off as a live one.
+  const unfinished = job !== null && !TERMINAL_STATUSES.has(job.status);
+  const stalled = unfinished && workersDown;
+  const running = unfinished && !stalled && job.processing_seconds !== null;
   useEffect(() => {
     if (!running) return;
     const id = setInterval(() => setNow(Date.now()), 1000);
@@ -114,7 +122,7 @@ export function JobProgress({ jobId, onReset }: Props) {
     );
   }
 
-  const timing = describeTiming(job, receivedAt, now);
+  const timing = describeTiming(job, receivedAt, now, stalled);
   const failed = job.status === "FAILED";
   const completed = job.status === "COMPLETED";
 
@@ -136,6 +144,14 @@ export function JobProgress({ jobId, onReset }: Props) {
           </button>
         </div>
       </header>
+
+      {stalled && (
+        <p className="warning" role="status">
+          {job.processing_seconds === null
+            ? "Worker недоступен — задача стоит в очереди и начнётся, когда он вернётся."
+            : "Worker недоступен — обработка не идёт. После его перезапуска задача будет помечена как прерванная, и её придётся запустить заново."}
+        </p>
+      )}
 
       {deleteError && (
         <p className="error" role="alert">

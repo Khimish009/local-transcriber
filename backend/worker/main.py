@@ -111,6 +111,10 @@ def main() -> None:
             extra={"stage": "startup", "count": len(purged)},
         )
 
+    # Before anything imports torch: the thread pool size is fixed when torch starts.
+    from worker.pipeline.models import configure_torch_threads
+
+    configure_torch_threads(settings)
     warm_up_models(settings)
 
     queue = Queue(settings.queue_name, connection=redis)

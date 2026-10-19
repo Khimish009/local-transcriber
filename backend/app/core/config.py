@@ -21,6 +21,10 @@ class Settings(BaseSettings):
 
     asr_model: str = "v3_e2e_rnnt"
     device: str = "cpu"
+    # Threads for torch inference in the worker (T12.3). None leaves torch's default: one per
+    # visible CPU. On Apple Silicon under Docker that includes the efficiency cores, and GigaAM
+    # ran 1.5x slower on all 11 vCPUs than on 8.
+    torch_num_threads: int | None = Field(default=None, ge=1)
 
     # repr=False keeps the token out of tracebacks and log lines that dump settings.
     hf_token: str | None = Field(default=None, repr=False)
@@ -73,11 +77,12 @@ class Settings(BaseSettings):
     def max_upload_bytes(self) -> int:
         return self.max_upload_mb * 1024 * 1024
 
-    @field_validator("pdf_font_path", mode="before")
+    @field_validator("pdf_font_path", "torch_num_threads", mode="before")
     @classmethod
-    def _empty_path_is_unset(cls, value: object) -> object:
+    def _empty_is_unset(cls, value: object) -> object:
         # docker-compose passes `PDF_FONT_PATH: ${PDF_FONT_PATH:-}`, and an empty string
-        # would otherwise become Path("."), i.e. a font path that can never be opened.
+        # would otherwise become Path("."), i.e. a font path that can never be opened — or,
+        # for TORCH_NUM_THREADS, a validation error instead of "use the default".
         if isinstance(value, str) and not value.strip():
             return None
         return value

@@ -41,6 +41,27 @@ def _prepare_hf_environment(settings: Settings, cached: bool) -> None:
         os.environ.pop("HF_HUB_OFFLINE", None)
 
 
+def configure_torch_threads(settings: Settings) -> None:
+    """T12.3 — apply TORCH_NUM_THREADS. Must run before torch is first imported.
+
+    `torch.set_num_threads` alone is not enough: on arm64 the convolution backend
+    (oneDNN/ACL) sizes its thread pool from OpenMP once, when it starts, and later changes
+    no longer reach it. OMP_NUM_THREADS is read at that moment, so it has to be in the
+    environment before the import.
+    """
+    threads = settings.torch_num_threads
+    if threads is None:
+        return
+
+    os.environ["OMP_NUM_THREADS"] = str(threads)
+    try:
+        import torch
+    except ImportError:
+        return  # the API image has no torch; nothing to configure
+    torch.set_num_threads(threads)
+    logger.info("torch threads configured", extra={"stage": "startup", "threads": threads})
+
+
 def _resolve_device(settings: Settings):
     try:
         import torch

@@ -39,6 +39,7 @@ from worker.pipeline.asr import build_asr_chunks, transcribe_chunks
 from worker.pipeline.diarization import run_diarization
 from worker.pipeline.embeddings import shared_trunk_embeddings
 from worker.pipeline.models import (
+    configure_torch_threads,
     get_asr_model,
     get_asr_recognizer,
     get_diarization_pipeline,
@@ -211,6 +212,7 @@ def main() -> None:
 
     configure_logging()
     settings = get_settings()
+    configure_torch_threads(settings)
     normalized = args.run / "normalized.wav"
     if not normalized.is_file():
         raise SystemExit(f"{normalized} is missing — run benchmark.run first")

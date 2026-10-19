@@ -1,4 +1,5 @@
 import logging
+import os
 import sys
 import types
 
@@ -270,3 +271,33 @@ def test_asr_without_gigaam_installed_is_reported(settings, monkeypatch) -> None
         models.load_asr_model(settings)
 
     assert exc.value.code is ErrorCode.MODEL_NOT_AVAILABLE
+
+
+# --- torch threads (T12.3) -----------------------------------------------------
+
+
+@pytest.fixture
+def thread_torch(monkeypatch):
+    calls: list[int] = []
+    torch = types.ModuleType("torch")
+    torch.set_num_threads = calls.append
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    # setenv first, so that monkeypatch also removes the variable the code under test sets.
+    monkeypatch.setenv("OMP_NUM_THREADS", "")
+    monkeypatch.delenv("OMP_NUM_THREADS")
+    return calls
+
+
+def test_torch_threads_are_left_alone_by_default(settings, thread_torch) -> None:
+    models.configure_torch_threads(settings)
+
+    assert thread_torch == []
+    assert "OMP_NUM_THREADS" not in os.environ
+
+
+def test_torch_threads_reach_openmp_and_torch(settings, thread_torch) -> None:
+    """OMP_NUM_THREADS covers the convolution pool, which set_num_threads cannot resize."""
+    models.configure_torch_threads(settings.model_copy(update={"torch_num_threads": 8}))
+
+    assert os.environ["OMP_NUM_THREADS"] == "8"
+    assert thread_torch == [8]

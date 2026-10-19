@@ -49,3 +49,24 @@ def test_cors_origins_from_env_not_parsed_as_json(monkeypatch) -> None:
     monkeypatch.setenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001")
 
     assert Settings().cors_origins == ["http://localhost:3000", "http://localhost:3001"]
+
+
+def test_torch_threads_default_to_torch_itself(monkeypatch) -> None:
+    """compose passes `TORCH_NUM_THREADS: ${TORCH_NUM_THREADS:-}`; "" means the default."""
+    monkeypatch.setenv("TORCH_NUM_THREADS", "")
+
+    assert Settings().torch_num_threads is None
+
+    monkeypatch.setenv("TORCH_NUM_THREADS", "8")
+
+    assert Settings().torch_num_threads == 8
+
+
+def test_torch_threads_must_be_positive(monkeypatch) -> None:
+    import pydantic
+    import pytest
+
+    monkeypatch.setenv("TORCH_NUM_THREADS", "0")
+
+    with pytest.raises(pydantic.ValidationError):
+        Settings()

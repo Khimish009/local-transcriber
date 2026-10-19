@@ -27,7 +27,11 @@ from worker.pipeline.alignment import build_transcript
 from worker.pipeline.asr import build_asr_chunks, transcribe_chunks
 from worker.pipeline.audio import normalize_audio, probe_audio
 from worker.pipeline.diarization import run_diarization
-from worker.pipeline.models import get_asr_recognizer, get_diarization_pipeline
+from worker.pipeline.models import (
+    configure_torch_threads,
+    get_asr_recognizer,
+    get_diarization_pipeline,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -193,6 +197,7 @@ def main() -> None:
 
     configure_logging()
     settings = get_settings()
+    configure_torch_threads(settings)
     models = [name.strip() for name in args.models.split(",") if name.strip()]
     samples = find_samples(args.samples)
 

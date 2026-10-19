@@ -640,6 +640,11 @@ instructions поддерживаются по ходу работы.
 
 ## T13.1 Телеметрия pyannote выключена
 
+✅ Сделано. `_disable_telemetry` в `worker/pipeline/models.py` + `ENV` образа worker.
+Проверено перехватом экспортёра в контейнере на 30-секундном фрагменте: стоковый пайплайн
+отправил бы 4 отчёта (`oss-model-init` ×2, `oss-pipeline-init`, `oss-pipeline-apply`),
+пайплайн worker'а — ни одного, даже с `PYANNOTE_METRICS_ENABLED=true` в окружении.
+
 `pyannote.audio` 4 по умолчанию отправляет на `otel.pyannote.ai` отчёт о каждой загрузке
 модели и пайплайна и о каждом обработанном файле: длительность записи, число спикеров,
 версию, ID сессии. `HF_HUB_OFFLINE` это не выключает. Нарушает правило 1 `AGENTS.md`.

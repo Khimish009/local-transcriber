@@ -60,6 +60,12 @@ RUN apt-get update \
 
 FROM worker-base AS worker
 
+# pyannote.audio 4 reports every model load and every processed file to otel.pyannote.ai
+# unless this is off (T13.1). The worker forces it off again before loading models; the
+# image default also covers ad-hoc `docker compose run worker python ...` sessions.
+ENV PYANNOTE_METRICS_ENABLED=false \
+    HF_HUB_DISABLE_TELEMETRY=1
+
 COPY . /srv
 ENV PYTHONPATH=/srv
 

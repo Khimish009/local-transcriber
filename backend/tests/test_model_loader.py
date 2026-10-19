@@ -29,7 +29,13 @@ def clean_pipeline_cache():
 
 @pytest.fixture(autouse=True)
 def isolate_hf_env(monkeypatch):
-    for key in ("HF_HOME", "HF_HUB_CACHE", "HF_HUB_OFFLINE", "HF_HUB_DISABLE_TELEMETRY"):
+    for key in (
+        "HF_HOME",
+        "HF_HUB_CACHE",
+        "HF_HUB_OFFLINE",
+        "HF_HUB_DISABLE_TELEMETRY",
+        "PYANNOTE_METRICS_ENABLED",
+    ):
         monkeypatch.delenv(key, raising=False)
 
 
@@ -43,6 +49,8 @@ class FakePipeline:
     """Stands in for `pyannote.audio.Pipeline`."""
 
     last_kwargs: dict = {}
+    # pyannote reports the load itself to its telemetry, so the flag matters at this moment.
+    metrics_flag_at_load: str | None = None
     result: object | None = None
     raises: Exception | None = None
 
@@ -52,6 +60,7 @@ class FakePipeline:
     @classmethod
     def from_pretrained(cls, model_id, **kwargs):
         cls.last_kwargs = {"model_id": model_id, **kwargs}
+        cls.metrics_flag_at_load = os.environ.get("PYANNOTE_METRICS_ENABLED")
         if cls.raises is not None:
             raise cls.raises
         return cls.result
@@ -67,6 +76,7 @@ def fake_ml(monkeypatch):
     FakePipeline.raises = None
     FakePipeline.result = FakePipeline()
     FakePipeline.last_kwargs = {}
+    FakePipeline.metrics_flag_at_load = None
 
     pyannote = types.ModuleType("pyannote")
     pyannote_audio = types.ModuleType("pyannote.audio")
@@ -117,6 +127,23 @@ def test_cached_model_forces_offline_mode(settings, fake_ml, monkeypatch) -> Non
 
     assert os.environ["HF_HUB_OFFLINE"] == "1"
     assert os.environ["HF_HUB_CACHE"] == str(models.hf_cache_dir(settings))
+
+
+@pytest.mark.parametrize("cached", [True, False])
+def test_telemetry_is_forced_off_before_pyannote_loads(
+    settings, fake_ml, monkeypatch, cached
+) -> None:
+    """T13.1 — pyannote reports every load and every processed file unless this is off."""
+    monkeypatch.setenv("PYANNOTE_METRICS_ENABLED", "true")
+    monkeypatch.setenv("HF_HUB_DISABLE_TELEMETRY", "0")
+    if cached:
+        cache_the_model(settings)
+
+    models.load_diarization_pipeline(settings, hf_token=TOKEN)
+
+    assert fake_ml.metrics_flag_at_load == "false"
+    assert os.environ["PYANNOTE_METRICS_ENABLED"] == "false"
+    assert os.environ["HF_HUB_DISABLE_TELEMETRY"] == "1"
 
 
 def test_first_download_uses_the_token_and_stays_online(settings, fake_ml) -> None:

@@ -1,6 +1,25 @@
+# Settings both backend services read. Each service adds only the ones it uses: the API
+# never sees HF_TOKEN or the pipeline parameters.
+x-backend-env: &backend-env
+  APP_ENV: ${APP_ENV:-local}
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+  DATA_DIR: ${DATA_DIR:-/data}
+  MODELS_DIR: ${MODELS_DIR:-/models}
+  ASR_MODEL: ${ASR_MODEL:-v3_e2e_rnnt}
+  DEVICE: ${DEVICE:-cpu}
+  PDF_FONT_PATH: ${PDF_FONT_PATH:-}
+
+# Docker keeps container logs forever by default, and the UI polls /health every few
+# seconds while it is open.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   redis:
-    image: redis:7-alpine
+    image: redis:7.4-alpine
     # AOF on: job state and worker registry must survive a container restart.
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
@@ -11,6 +30,7 @@ services:
       timeout: 3s
       retries: 10
       start_period: 5s
+    logging: *logging
     restart: unless-stopped
 
   api:
@@ -18,20 +38,9 @@ services:
       context: ./backend
       target: runtime
     environment:
-      APP_ENV: ${APP_ENV:-local}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      DATA_DIR: ${DATA_DIR:-/data}
-      MODELS_DIR: ${MODELS_DIR:-/models}
-      ASR_MODEL: ${ASR_MODEL:-v3_e2e_rnnt}
-      DEVICE: ${DEVICE:-cpu}
+      <<: *backend-env
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-2048}
       ALLOWED_EXTENSIONS: ${ALLOWED_EXTENSIONS:-wav,mp3,m4a,mp4,webm,ogg}
-      MAX_ASR_CHUNK_SECONDS: ${MAX_ASR_CHUNK_SECONDS:-20}
-      MERGE_SILENCE_GAP_MS: ${MERGE_SILENCE_GAP_MS:-400}
-      SPEAKER_MATCH_TOLERANCE_MS: ${SPEAKER_MATCH_TOLERANCE_MS:-250}
-      BLOCK_SILENCE_GAP_MS: ${BLOCK_SILENCE_GAP_MS:-1500}
-      MAX_BLOCK_SECONDS: ${MAX_BLOCK_SECONDS:-40}
-      PDF_FONT_PATH: ${PDF_FONT_PATH:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
     volumes:
       - ./data:/data
@@ -49,6 +58,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
+    logging: *logging
     restart: unless-stopped
 
   worker:
@@ -56,14 +66,8 @@ services:
       context: ./backend
       # Separate target: torch and pyannote are installed only here, not into the API image.
       target: worker
-    command: ["python", "-m", "worker.main"]
     environment:
-      APP_ENV: ${APP_ENV:-local}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      DATA_DIR: ${DATA_DIR:-/data}
-      MODELS_DIR: ${MODELS_DIR:-/models}
-      ASR_MODEL: ${ASR_MODEL:-v3_e2e_rnnt}
-      DEVICE: ${DEVICE:-cpu}
+      <<: *backend-env
       TORCH_NUM_THREADS: ${TORCH_NUM_THREADS:-}
       MAX_ASR_CHUNK_SECONDS: ${MAX_ASR_CHUNK_SECONDS:-20}
       MERGE_SILENCE_GAP_MS: ${MERGE_SILENCE_GAP_MS:-400}
@@ -71,7 +75,6 @@ services:
       SPEAKER_MATCH_TOLERANCE_MS: ${SPEAKER_MATCH_TOLERANCE_MS:-250}
       BLOCK_SILENCE_GAP_MS: ${BLOCK_SILENCE_GAP_MS:-1500}
       MAX_BLOCK_SECONDS: ${MAX_BLOCK_SECONDS:-40}
-      PDF_FONT_PATH: ${PDF_FONT_PATH:-}
       HF_TOKEN: ${HF_TOKEN:-}
     volumes:
       - ./data:/data
@@ -87,6 +90,7 @@ services:
       # Generous: the worker loads both ML models before it starts accepting jobs, and on
       # a fresh install that includes downloading ~460 MB of weights.
       start_period: 600s
+    logging: *logging
     restart: unless-stopped
 
   frontend:
@@ -106,6 +110,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
+    logging: *logging
     restart: unless-stopped
 
 volumes:

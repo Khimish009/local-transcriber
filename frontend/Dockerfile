@@ -1,7 +1,8 @@
 FROM node:22-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+# The npm cache is a BuildKit cache mount: a lockfile change downloads only what changed.
+RUN --mount=type=cache,target=/root/.npm npm ci
 
 # ---------------------------------------------------------------------------
 FROM node:22-alpine AS builder

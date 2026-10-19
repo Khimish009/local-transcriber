@@ -533,6 +533,11 @@ cd backend && PYTHONPATH=. .venv/bin/python -m benchmark.report \
 через этот метод проходит каждый переход статуса, включая аварийное завершение из
 `recover_orphaned_jobs`, поэтому забыть отметку негде.
 
+После ревью время обработки считает только сервер (`processing_seconds`,
+`processing_includes_queue`). Recovery ставит `finished_at` по последнему обновлению задачи,
+а страница задачи останавливает счётчик при мёртвом worker. Подробности —
+[docs/processing-time.md](docs/processing-time.md).
+
 ## Остальное
 
 - UI states — drag & drop уже есть (Phase 1); осталась вёрстка длинного транскрипта:

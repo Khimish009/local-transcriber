@@ -5,6 +5,8 @@
 ## [Unreleased]
 
 ### Changed
+- `AGENTS.md`: раздел «Current assignment» отмечает T11.2 сделанным, появился раздел
+  «Документация» со ссылками на `docs/` и `CHANGELOG.md`.
 - Время обработки считает сервер: в ответе `Job` появились поля `processing_seconds` и
   `processing_includes_queue`. UI их больше не пересчитывает, поэтому определение одно
   и покрыто тестами. В Redis эти поля не пишутся.

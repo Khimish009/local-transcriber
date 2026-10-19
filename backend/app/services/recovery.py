@@ -21,7 +21,7 @@ import logging
 
 from redis import Redis
 
-from app.core.errors import ErrorCode
+from app.core.errors import AppError, ErrorCode
 from app.services.job_store import JobStore
 from app.services.queue import cancel_job, is_pending_in_queue
 
@@ -48,12 +48,20 @@ def recover_orphaned_jobs(redis: Redis) -> list[str]:
         # only runs at the next worker start — possibly the next morning. The last update
         # is the latest moment the job is known to have been alive, so the processing time
         # becomes a lower bound instead of absorbing the whole downtime.
-        store.fail(
-            job_id,
-            message=RECOVERY_MESSAGE,
-            error_code=ErrorCode.WORKER_CRASHED,
-            finished_at=job.updated_at,
-        )
+        try:
+            store.fail(
+                job_id,
+                message=RECOVERY_MESSAGE,
+                error_code=ErrorCode.WORKER_CRASHED,
+                finished_at=job.updated_at,
+            )
+        except AppError as exc:
+            if exc.code is not ErrorCode.JOB_NOT_FOUND:
+                raise
+            # Deleted by the user after the scan: nothing left to recover, and a crash here
+            # would take the worker down before it serves the queue.
+            logger.info("orphaned job deleted before recovery", extra={"job_id": job_id})
+            continue
         cancel_job(redis, job_id)
         recovered.append(job_id)
         logger.warning(

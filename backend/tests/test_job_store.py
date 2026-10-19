@@ -188,3 +188,62 @@ def test_derived_fields_are_served_but_not_stored(store, redis) -> None:
     assert "processing_seconds" not in stored
     assert "processing_seconds" in served
     assert "processing_includes_queue" in served
+
+
+# --- a delete racing a write (T13.6) ------------------------------------------
+
+
+def _watch_events(redis, job_id: str):
+    pubsub = redis.pubsub()
+    pubsub.subscribe(events_channel(job_id))
+    pubsub.get_message(timeout=1)  # subscribe confirmation
+    return pubsub
+
+
+def test_update_does_not_resurrect_a_job_deleted_after_it_was_read(
+    store, redis, monkeypatch
+) -> None:
+    job = store.create(_source())
+    events = _watch_events(redis, job.job_id)
+    read = store.get
+
+    def read_then_delete(job_id: str):
+        record = read(job_id)
+        redis.delete(job_key(job_id))  # the DELETE request lands between update's read and write
+        return record
+
+    monkeypatch.setattr(store, "get", read_then_delete)
+
+    with pytest.raises(AppError) as exc:
+        store.update(job.job_id, status=JobStatus.TRANSCRIBING, progress=40)
+
+    assert exc.value.code is ErrorCode.JOB_NOT_FOUND
+    assert exc.value.status_code == 404
+    assert not redis.exists(job_key(job.job_id))
+    assert events.get_message(ignore_subscribe_messages=True, timeout=0.1) is None
+
+
+def test_replace_does_not_resurrect_a_job_deleted_after_it_was_read(store, redis) -> None:
+    job = store.create(_source())
+    events = _watch_events(redis, job.job_id)
+    snapshot = store.require(job.job_id)
+    snapshot.source.size_bytes = 2048
+    redis.delete(job_key(job.job_id))  # the DELETE request lands after the caller's read
+
+    with pytest.raises(AppError) as exc:
+        store.replace(snapshot)
+
+    assert exc.value.code is ErrorCode.JOB_NOT_FOUND
+    assert exc.value.status_code == 404
+    assert not redis.exists(job_key(job.job_id))
+    assert events.get_message(ignore_subscribe_messages=True, timeout=0.1) is None
+
+
+def test_replace_stores_the_callers_changes(store) -> None:
+    job = store.create(_source())
+    snapshot = store.require(job.job_id)
+    snapshot.source.size_bytes = 2048
+
+    store.replace(snapshot)
+
+    assert store.require(job.job_id).source.size_bytes == 2048

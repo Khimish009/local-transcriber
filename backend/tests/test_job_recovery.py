@@ -6,7 +6,7 @@ from rq.job import Job as RqJob
 
 from app.core.errors import ErrorCode
 from app.schemas.job import JobSource, JobStatus
-from app.services.job_store import job_key
+from app.services.job_store import JobStore, job_key
 from app.services.queue import enqueue_job, fetch_rq_job
 from app.services.recovery import recover_orphaned_jobs
 
@@ -93,3 +93,21 @@ def test_recovered_job_finishes_at_its_last_update_not_at_the_restart(store, red
     failed = store.require(job_id)
     assert failed.finished_at == record.updated_at
     assert failed.updated_at > failed.finished_at  # the record itself was still rewritten
+
+
+def test_job_deleted_during_recovery_is_skipped(store, redis, monkeypatch) -> None:
+    """The user may delete a job while the worker is starting; recovery must carry on."""
+    deleted = _job(store, JobStatus.DIARIZING, 10)
+    orphaned = _job(store, JobStatus.TRANSCRIBING, 50)
+    fail = JobStore.fail
+
+    def delete_first(self, job_id, *args, **kwargs):
+        if job_id == deleted:
+            redis.delete(job_key(job_id))
+        return fail(self, job_id, *args, **kwargs)
+
+    monkeypatch.setattr(JobStore, "fail", delete_first)
+
+    assert recover_orphaned_jobs(redis) == [orphaned]
+    assert store.get(deleted) is None, "not brought back by the failure record"
+    assert store.require(orphaned).error_code is ErrorCode.WORKER_CRASHED

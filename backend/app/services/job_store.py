@@ -48,13 +48,16 @@ class JobStore:
             created_at=now,
             updated_at=now,
         )
-        self._persist(job)
+        self._persist(job, must_exist=False)
         return job
 
     def replace(self, job: Job) -> Job:
-        """Persist a job record modified by the caller (e.g. after the upload is stored)."""
+        """Persist a job record modified by the caller (e.g. after the upload is stored).
+
+        Raises JOB_NOT_FOUND if the job was deleted since the caller read it.
+        """
         job.updated_at = _now()
-        self._persist(job)
+        self._persist(job, must_exist=True)
         return job
 
     def get(self, job_id: str) -> Job | None:
@@ -126,7 +129,7 @@ class JobStore:
         if error_code is not None:
             job.error_code = error_code
         job.updated_at = now
-        self._persist(job)
+        self._persist(job, must_exist=True)
         logger.info(
             "job updated",
             extra={
@@ -155,10 +158,16 @@ class JobStore:
     def delete(self, job_id: str) -> None:
         self._redis.delete(job_key(job_id))
 
-    def _persist(self, job: Job) -> None:
+    def _persist(self, job: Job, *, must_exist: bool) -> None:
         # Derived fields are not stored: a running job's processing time would be stale the
         # moment it is written. They are recomputed on every read.
-        self._redis.set(job_key(job.job_id), job.model_dump_json(exclude=DERIVED_FIELDS))
+        payload = job.model_dump_json(exclude=DERIVED_FIELDS)
+        # `update` and `replace` read the record, change it and write it back. A DELETE that
+        # lands in between would be undone by a plain SET: the job comes back with the status
+        # of a running one and no files. XX makes Redis skip the write if the key is gone,
+        # checked and applied atomically.
+        if not self._redis.set(job_key(job.job_id), payload, xx=must_exist):
+            raise AppError(ErrorCode.JOB_NOT_FOUND, "Job not found", status_code=404)
         # Best-effort notification for SSE subscribers; polling remains the fallback.
         self._redis.publish(events_channel(job.job_id), job.model_dump_json())
 

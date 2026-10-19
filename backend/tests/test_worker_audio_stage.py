@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from app.core.errors import AppError, ErrorCode
+from app.schemas.audio import AudioMetadata
 from app.schemas.job import JobSource, JobStatus
 from tests.test_audio_pipeline import write_wav
 from worker.jobs import process_job
@@ -89,3 +90,27 @@ def test_missing_source_fails_the_job(store, storage, settings, monkeypatch, red
     failed = store.get(job.job_id)
     assert failed.status is JobStatus.FAILED
     assert failed.error_code is ErrorCode.FFMPEG_FAILED
+
+
+def test_job_deleted_before_the_metadata_is_saved_does_not_come_back(
+    queued_job, store, monkeypatch
+) -> None:
+    """T13.6 — the stage reads the record, probes, then writes it back; a delete in between wins."""
+    job_id = queued_job(lambda path: write_wav(path, seconds=1.0))
+    normalized: list[tuple] = []
+    monkeypatch.setattr(
+        "worker.jobs.probe_audio", lambda *args: AudioMetadata(duration_seconds=1.0)
+    )
+    monkeypatch.setattr("worker.jobs.normalize_audio", lambda *args: normalized.append(args))
+    original_replace = store.__class__.replace
+
+    def delete_then_replace(self, job):
+        self.delete(job.job_id)  # the DELETE request lands after the stage read the record
+        return original_replace(self, job)
+
+    monkeypatch.setattr(store.__class__, "replace", delete_then_replace)
+
+    process_job(job_id)  # no exception reaches RQ: there is nothing left to fail
+
+    assert store.get(job_id) is None
+    assert normalized == [], "the stage must stop at the vanished record, not carry on"

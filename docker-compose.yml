@@ -37,7 +37,9 @@ services:
       - ./data:/data
       - ./models:/models
     ports:
-      - "${API_PORT:-8000}:8000"
+      # Loopback only unless BIND_ADDRESS says otherwise: the API has no authentication,
+      # and anyone who can reach it can download every transcript (T13.2).
+      - "${BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8000}:8000"
     depends_on:
       redis:
         condition: service_healthy
@@ -94,7 +96,7 @@ services:
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     ports:
-      - "${WEB_PORT:-3000}:3000"
+      - "${BIND_ADDRESS:-127.0.0.1}:${WEB_PORT:-3000}:3000"
     depends_on:
       api:
         condition: service_healthy

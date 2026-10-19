@@ -1,3 +1,6 @@
+# API dependencies, shared by both images. Version ranges here; the images install the
+# exact versions and hashes from requirements.lock. After an edit, run
+# ./scripts/lock-deps.sh (TASKS.md T13.3).
 fastapi>=0.115,<1.0
 uvicorn[standard]>=0.30,<1.0
 pydantic>=2.8,<3.0

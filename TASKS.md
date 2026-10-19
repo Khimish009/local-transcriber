@@ -664,6 +664,12 @@ instructions поддерживаются по ходу работы.
 
 ## T13.3 Воспроизводимая сборка: lock-файлы с хэшами
 
+✅ Сделано. `backend/requirements.lock`, `requirements-torch.lock`, `requirements-worker.lock`
+генерирует `scripts/lock-deps.sh`; Dockerfile ставит их с `--require-hashes --no-deps`.
+Проверено: `pip freeze` обоих пересобранных образов совпал с образами Phase 12 построчно,
+`pip check` чистый. Повторный запуск скрипта не меняет ни одной версии. GigaAM (git) в lock
+не входит: хэша у git-зависимости быть не может, её фиксирует id коммита.
+
 Транзитивные зависимости не закреплены: чистая сборка через месяц получит другие scipy и
 numpy, а на них идёт кластеризация диаризации. Lock-файлы генерирует
 `uv pip compile --universal --generate-hashes` (один на обе архитектуры). Версии — ровно те,

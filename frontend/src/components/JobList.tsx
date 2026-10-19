@@ -27,14 +27,21 @@ function when(iso: string): string {
   });
 }
 
-function details(job: Job): string {
+/** Same caveat as on the job page, shorter: a legacy figure also covers queue time. */
+function spentLabel(job: Job): string | null {
   const spent = processingTime(job);
+  if (spent === null) return null;
+  const label = `обработка ${formatElapsed(spent.seconds)}`;
+  return spent.includesQueue ? `${label} (вместе с очередью)` : label;
+}
+
+function details(job: Job): string {
   return [
     when(job.created_at),
     formatBytes(job.source.size_bytes),
     job.audio ? formatDuration(job.audio.duration_seconds) : null,
     job.status === "COMPLETED" ? null : `${job.progress}%`,
-    spent ? `обработка ${formatElapsed(spent.seconds)}` : null,
+    spentLabel(job),
   ]
     .filter(Boolean)
     .join(" · ");

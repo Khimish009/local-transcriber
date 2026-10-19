@@ -5,6 +5,9 @@
 ## [Unreleased]
 
 ### Added
+- Phase 13 — Hardening в `TASKS.md`: семь задач по приватности, воспроизводимой сборке и
+  надёжности. Главная находка — pyannote по умолчанию шлёт телеметрию о каждой
+  обработанной записи на `otel.pyannote.ai`.
 - `TORCH_NUM_THREADS`: число потоков torch в worker, а через `OMP_NUM_THREADS` — и
   numpy/scipy. По умолчанию не задан. На Apple Silicon
   стоит попробовать число производительных ядер плюс пару (8 на M3 Pro с 11 vCPU): на всех

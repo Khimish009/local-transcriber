@@ -18,7 +18,7 @@ export function TranscriberApp() {
       }
     : null;
 
-  const workersDown = health.data !== null && health.data.workers.status !== "ok";
+  const { workersDown } = health;
   const modelsMissing = health.data !== null && health.data.models.status === "missing";
 
   return (

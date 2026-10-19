@@ -95,7 +95,7 @@ Generate TXT / DOCX / PDF
 - FFmpeg-стадия: метаданные исходника + `work/normalized.wav` (WAV / mono / 16 kHz / PCM s16le), оригинал не изменяется;
 - диаризация через `pyannote/speaker-diarization-community-1`: обычная и exclusive разметка сохраняются в `work/diarization.json`, спикеры анонимные (`SPEAKER_00`, ...);
 - количество спикеров: auto или точное значение из UI;
-- распознавание речи через GigaAM: речевые интервалы диаризации собираются в ASR-чанки (короткие паузы склеиваются по `MERGE_SILENCE_GAP_MS`, длина ограничена `MAX_ASR_CHUNK_SECONDS`), слова получают таймкоды на глобальном таймлайне и сохраняются в `work/asr_words.json`;
+- распознавание речи через GigaAM: речевые интервалы диаризации собираются в ASR-чанки (короткие паузы склеиваются по `MERGE_SILENCE_GAP_MS`, длина ограничена `MAX_ASR_CHUNK_SECONDS`), чанки распознаются батчами по `ASR_BATCH_SIZE` (8 по умолчанию; на результат не влияет, только на скорость и память), слова получают таймкоды на глобальном таймлайне и сохраняются в `work/asr_words.json`;
 - модель ASR выбирается через `ASR_MODEL` (`v3_e2e_rnnt` по умолчанию, `v3_rnnt` как альтернатива), веса качаются в `models/gigaam/` при первой задаче — токен для них не нужен;
 - прогресс стадии TRANSCRIBING (30–85) считается по реально обработанной длительности аудио;
 - выравнивание: каждому слову назначается спикер по midpoint и exclusive-диаризации с допуском `SPEAKER_MATCH_TOLERANCE_MS`; если надёжно назначить нельзя, `speaker_id` остаётся `null`, спикер не выдумывается;
@@ -135,7 +135,7 @@ PYTHONPATH=. .venv/bin/python -m benchmark.thresholds \
 
 `benchmark.equivalence` проверяет, что ускорения Phase 12 не меняют результат: сравнивает
 оптимизированный pipeline с прежней реализацией на записи из `benchmark.run` и завершается с
-ненулевым кодом, если что-то разошлось. Запускать после обновления `pyannote.audio`.
+ненулевым кодом, если что-то разошлось. Запускать после обновления `pyannote.audio` или GigaAM.
 
 ```bash
 docker compose run --rm --no-deps worker python -m benchmark.equivalence \

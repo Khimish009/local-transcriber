@@ -21,7 +21,7 @@ from worker.pipeline.alignment import build_transcript
 from worker.pipeline.asr import build_asr_chunks, transcribe_chunks
 from worker.pipeline.audio import normalize_audio, probe_audio
 from worker.pipeline.diarization import run_diarization
-from worker.pipeline.models import get_asr_model, get_diarization_pipeline
+from worker.pipeline.models import get_asr_recognizer, get_diarization_pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +111,7 @@ def transcribe(job_id: str, store: JobStore, storage: JobStorage, settings: Sett
     )
 
     # Loaded once per worker process and reused by every later job.
-    model = get_asr_model(settings)
+    recognizer = get_asr_recognizer(settings)
     store.update(
         job_id,
         progress=stage_progress(stage, ASR_MODEL_LOAD_SHARE, 1),
@@ -142,8 +142,9 @@ def transcribe(job_id: str, store: JobStore, storage: JobStorage, settings: Sett
     result = transcribe_chunks(
         storage.normalized_path(job_id),
         chunks,
-        model,
+        recognizer,
         settings.asr_model,
+        batch_size=settings.asr_batch_size,
         on_progress=report,
     )
 

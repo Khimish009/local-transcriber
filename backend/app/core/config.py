@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     max_upload_mb: int = 2048
     max_asr_chunk_seconds: int = 20
     merge_silence_gap_ms: int = 400
+    # ASR chunks recognized per forward pass (T12.2). Results do not depend on it; memory
+    # grows with it. 8 measured 2.2x faster than one chunk at a time on CPU.
+    asr_batch_size: int = Field(default=8, ge=1)
 
     # Alignment thresholds (SPEC.md §3.4, §3.5). A word whose midpoint falls outside every
     # speaker interval may still be attached to one this close; otherwise speaker_id is null.

@@ -39,7 +39,7 @@ def worker_env(monkeypatch, redis, settings, storage):
 
 
 def install_model(monkeypatch, model) -> None:
-    monkeypatch.setattr("worker.jobs.get_asr_model", lambda settings: model)
+    monkeypatch.setattr("worker.jobs.get_asr_recognizer", lambda settings: model)
 
 
 def make_job(store) -> str:
@@ -129,7 +129,7 @@ def test_model_load_failure_marks_the_job(worker_env, store, monkeypatch) -> Non
     def refuse(settings):
         raise AppError(ErrorCode.MODEL_NOT_AVAILABLE, "gigaam is not installed in this image")
 
-    monkeypatch.setattr("worker.jobs.get_asr_model", refuse)
+    monkeypatch.setattr("worker.jobs.get_asr_recognizer", refuse)
     job_id = make_job(store)
 
     with pytest.raises(AppError):

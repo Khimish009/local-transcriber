@@ -5,20 +5,21 @@ Two independent pieces live here:
 * `build_asr_chunks` — pure, deterministic geometry. It turns diarization speech regions
   into ASR chunks: small silences are merged so the model gets enough context, and chunks
   are capped at a safe length. No ML imports, fully unit-testable.
-* `transcribe_chunks` — runs the model over those chunks and shifts the local word
-  timestamps onto the global timeline (SPEC.md §3.3).
+* `transcribe_chunks` — runs a recognizer over those chunks in batches and shifts the local
+  word timestamps onto the global timeline (SPEC.md §3.3). `GigaAmBatchRecognizer` is the
+  real recognizer; tests pass a fake one, since torch only exists in the worker image.
 
 Chunk boundaries deliberately do NOT follow speaker turns: very short fragments degrade
 recognition quality (SPEC.md §3.3).
 """
 
 import logging
-import tempfile
 import wave
 from collections.abc import Callable
+from dataclasses import dataclass
 from math import ceil
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from app.core.errors import AppError, ErrorCode
 from app.schemas.asr import AsrChunk, AsrResult, AsrWord
@@ -31,6 +32,72 @@ logger = logging.getLogger(__name__)
 MIN_CHUNK_SECONDS = 0.1
 
 ProgressCallback = Callable[[float, float], None]
+
+
+@dataclass(frozen=True)
+class Recognition:
+    """One chunk's text and chunk-local word timestamps (None when the model gave none)."""
+
+    text: str
+    words: list[Any] | None
+
+
+class Recognizer(Protocol):
+    """Recognizes a batch of PCM s16le mono chunks; one result per chunk, in order.
+
+    A result exposes `text` and `words` (each with `text`, `start`, `end` in seconds from
+    the start of its chunk).
+    """
+
+    def __call__(self, pcm_batch: list[bytes], sample_rate: int) -> list[Any]: ...
+
+
+class GigaAmBatchRecognizer:
+    """Batched GigaAM inference (T12.2): one padded forward pass per batch of chunks.
+
+    `GigaAMASR.transcribe` handles one file per call and spawns ffmpeg to decode it. This
+    runs the same `forward` + `_decode` that GigaAM's own `transcribe_longform` batches
+    with. On CPU it is 2.2x faster at batch 8, and text and word timestamps match
+    `transcribe` exactly (`python -m benchmark.equivalence`).
+
+    Exactness rests on two properties of the pinned commit, so re-run the check after
+    bumping gigaam: the v3 preprocessor uses `center=False`, so no mel frame reaches past
+    a chunk's own samples into the zero padding, and the encoder masks padded frames by
+    length (`_mask_time`, attention and conv masks). `_decode` is private, which is only
+    acceptable because gigaam is pinned to a commit (requirements-worker.txt).
+    """
+
+    def __init__(self, model: Any) -> None:
+        self.model = model
+
+    def __call__(self, pcm_batch: list[bytes], sample_rate: int) -> list[Recognition]:
+        import torch
+        from gigaam.model import LONGFORM_THRESHOLD
+        from gigaam.preprocess import SAMPLE_RATE
+
+        if sample_rate != SAMPLE_RATE:
+            raise ValueError(f"GigaAM expects {SAMPLE_RATE} Hz audio, got {sample_rate} Hz")
+
+        # The same int16 -> float conversion as gigaam.preprocess.load_audio.
+        waves = [
+            torch.frombuffer(bytearray(pcm), dtype=torch.int16).float() / 32768.0
+            for pcm in pcm_batch
+        ]
+        longest = max(wave_.shape[0] for wave_ in waves)
+        if longest > LONGFORM_THRESHOLD:
+            # transcribe() refuses such input as well; MAX_ASR_CHUNK_SECONDS is too high.
+            raise ValueError(f"chunk of {longest / sample_rate:.1f} s is too long for GigaAM")
+
+        device, dtype = self.model._device, self.model._dtype
+        batch = torch.zeros(len(waves), longest, dtype=dtype, device=device)
+        for row, wave_ in enumerate(waves):
+            batch[row, : wave_.shape[0]] = wave_
+        lengths = torch.tensor([wave_.shape[0] for wave_ in waves], device=device)
+
+        with torch.inference_mode():
+            encoded, encoded_len = self.model.forward(batch, lengths)
+            decoded = self.model._decode(encoded, encoded_len, lengths, word_timestamps=True)
+        return [Recognition(text=text, words=words) for text, words in decoded]
 
 
 def merge_speech_intervals(segments: list[SpeakerSegment]) -> list[list[float]]:
@@ -112,22 +179,15 @@ def _open_normalized(audio_path: Path) -> wave.Wave_read:
         raise AppError(ErrorCode.ASR_FAILED, "Could not read the normalized audio") from exc
 
 
-def _write_chunk(source: wave.Wave_read, chunk: AsrChunk, destination: Path) -> float:
-    """Copy `chunk` out of the open WAV into its own file. Returns the written duration."""
+def _read_chunk(source: wave.Wave_read, chunk: AsrChunk) -> tuple[bytes, float]:
+    """The PCM frames of `chunk` from the open WAV, and their duration in seconds."""
     rate = source.getframerate()
     total_frames = source.getnframes()
     first = max(0, min(total_frames, int(chunk.start * rate)))
     last = max(first, min(total_frames, int(round(chunk.end * rate))))
 
     source.setpos(first)
-    frames = source.readframes(last - first)
-
-    with wave.open(str(destination), "wb") as out:
-        out.setnchannels(source.getnchannels())
-        out.setsampwidth(source.getsampwidth())
-        out.setframerate(rate)
-        out.writeframes(frames)
-    return (last - first) / rate
+    return source.readframes(last - first), (last - first) / rate
 
 
 def _extract_words(result: Any, offset: float) -> list[AsrWord]:
@@ -155,33 +215,53 @@ def _extract_words(result: Any, offset: float) -> list[AsrWord]:
 def transcribe_chunks(
     audio_path: Path,
     chunks: list[AsrChunk],
-    model: Any,
+    recognizer: Recognizer,
     model_name: str,
+    batch_size: int = 1,
     on_progress: ProgressCallback | None = None,
 ) -> AsrResult:
-    """T4.3/T4.4 — recognize every chunk and report progress by processed duration."""
+    """T4.3/T4.4/T12.2 — recognize the chunks `batch_size` at a time.
+
+    Progress is reported after every batch, by processed duration.
+    """
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive")
+
     total = sum(chunk.duration for chunk in chunks)
     processed = 0.0
     words: list[AsrWord] = []
 
-    with _open_normalized(audio_path) as source, tempfile.TemporaryDirectory() as tmp_dir:
-        chunk_path = Path(tmp_dir) / "chunk.wav"
-        for chunk in chunks:
+    with _open_normalized(audio_path) as source:
+        rate = source.getframerate()
+        for first in range(0, len(chunks), batch_size):
+            batch = chunks[first : first + batch_size]
+            pieces = [(chunk, *_read_chunk(source, chunk)) for chunk in batch]
             # A chunk can end up empty when diarization points past the end of the file.
-            if _write_chunk(source, chunk, chunk_path) >= MIN_CHUNK_SECONDS:
+            audible = [
+                (chunk, pcm) for chunk, pcm, seconds in pieces if seconds >= MIN_CHUNK_SECONDS
+            ]
+            if audible:
                 try:
-                    result = model.transcribe(str(chunk_path), word_timestamps=True)
+                    results = recognizer([pcm for _, pcm in audible], rate)
+                    if len(results) != len(audible):
+                        raise ValueError(f"{len(results)} results for {len(audible)} chunks")
                 except AppError:
                     raise
                 except Exception as exc:
                     logger.exception(
-                        "ASR failed on a chunk",
-                        extra={"stage": "asr", "chunk": chunk.index, "start": chunk.start},
+                        "ASR failed on a batch",
+                        extra={
+                            "stage": "asr",
+                            "first_chunk": audible[0][0].index,
+                            "last_chunk": audible[-1][0].index,
+                            "start": audible[0][0].start,
+                        },
                     )
                     raise AppError(ErrorCode.ASR_FAILED, "Could not recognize the speech") from exc
-                words.extend(_extract_words(result, chunk.start))
+                for (chunk, _), result in zip(audible, results, strict=True):
+                    words.extend(_extract_words(result, chunk.start))
 
-            processed += chunk.duration
+            processed += sum(chunk.duration for chunk in batch)
             if on_progress is not None:
                 on_progress(processed, total)
 
@@ -192,6 +272,7 @@ def transcribe_chunks(
             "stage": "asr",
             "model": model_name,
             "chunks": len(chunks),
+            "batch_size": batch_size,
             "words": len(words),
             "speech_seconds": round(total, 3),
         },

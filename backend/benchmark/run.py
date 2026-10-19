@@ -27,7 +27,7 @@ from worker.pipeline.alignment import build_transcript
 from worker.pipeline.asr import build_asr_chunks, transcribe_chunks
 from worker.pipeline.audio import normalize_audio, probe_audio
 from worker.pipeline.diarization import run_diarization
-from worker.pipeline.models import get_asr_model, get_diarization_pipeline
+from worker.pipeline.models import get_asr_recognizer, get_diarization_pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -112,11 +112,13 @@ def transcribe_with(
         raise SystemExit(f"{filename}: diarization found no speech to transcribe")
 
     started = time.monotonic()
-    model = get_asr_model(model_settings)
+    recognizer = get_asr_recognizer(model_settings)
     load_seconds = time.monotonic() - started
 
     started = time.monotonic()
-    asr = transcribe_chunks(normalized, chunks, model, model_name)
+    asr = transcribe_chunks(
+        normalized, chunks, recognizer, model_name, batch_size=model_settings.asr_batch_size
+    )
     asr_seconds = time.monotonic() - started
 
     transcript = build_transcript(

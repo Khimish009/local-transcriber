@@ -29,24 +29,30 @@ class FakeTranscription:
 
 
 class FakeAsrModel:
-    """Mimics `gigaam.GigaAMASR.transcribe`. Reports one word per chunk second."""
+    """A `Recognizer` over PCM batches, like `GigaAmBatchRecognizer`. One word per second.
+
+    `calls` holds, per batch, the duration of every chunk in it.
+    """
 
     def __init__(self, results=None, raises: Exception | None = None) -> None:
         self.results = results
         self.raises = raises
-        self.calls: list[tuple[str, float]] = []
+        self.calls: list[list[float]] = []
 
-    def transcribe(self, wav_file: str, word_timestamps: bool = False):
-        assert word_timestamps is True, "word timestamps are mandatory (SPEC.md §3.1)"
-        with wave.open(wav_file, "rb") as handle:
-            duration = handle.getnframes() / handle.getframerate()
-        self.calls.append((wav_file, round(duration, 3)))
+    def __call__(self, pcm_batch: list[bytes], sample_rate: int):
+        assert sample_rate == SAMPLE_RATE
+        durations = [round(len(pcm) / 2 / sample_rate, 3) for pcm in pcm_batch]
+        self.calls.append(durations)
 
         if self.raises is not None:
             raise self.raises
         if self.results is not None:
-            return self.results[len(self.calls) - 1]
+            done = sum(len(batch) for batch in self.calls[:-1])
+            return self.results[done : done + len(pcm_batch)]
+        return [self._words_for(duration) for duration in durations]
 
+    @staticmethod
+    def _words_for(duration: float) -> FakeTranscription:
         count = max(1, int(duration))
         words = [FakeWord(text=f"w{i}", start=float(i), end=i + 0.5) for i in range(count)]
         return FakeTranscription(text=" ".join(w.text for w in words), words=words)
@@ -93,7 +99,7 @@ def test_only_the_requested_slice_is_sent_to_the_model(audio) -> None:
 
     transcribe_chunks(audio, [chunk(0, 4.0, 11.5)], model, "v3_e2e_rnnt")
 
-    assert model.calls[0][1] == pytest.approx(7.5)
+    assert model.calls[0] == [pytest.approx(7.5)]
 
 
 def test_progress_follows_processed_duration(audio) -> None:
@@ -157,3 +163,65 @@ def test_empty_words_are_dropped(audio) -> None:
     result = transcribe_chunks(audio, [chunk(0, 2.0, 5.0)], model, "v3_e2e_rnnt")
 
     assert [word.text for word in result.words] == ["да"]
+
+
+def test_chunks_are_recognized_in_batches(audio) -> None:
+    model = FakeAsrModel()
+    chunks = [chunk(i, i * 5.0, i * 5.0 + 4.0) for i in range(5)]
+
+    result = transcribe_chunks(audio, chunks, model, "v3_e2e_rnnt", batch_size=2)
+
+    assert [len(batch) for batch in model.calls] == [2, 2, 1]
+    assert len(result.words) == 5 * 4, "batching must not lose or duplicate words"
+    assert [round(w.start, 3) for w in result.words[:5]] == [0.0, 1.0, 2.0, 3.0, 5.0]
+
+
+def test_batch_results_stay_with_their_chunks(audio) -> None:
+    first = FakeTranscription(text="да", words=[FakeWord("да", 0.5, 0.8)])
+    second = FakeTranscription(text="нет", words=[FakeWord("нет", 0.1, 0.4)])
+    model = FakeAsrModel(results=[first, second])
+
+    result = transcribe_chunks(
+        audio, [chunk(0, 2.0, 5.0), chunk(1, 10.0, 12.0)], model, "m", batch_size=8
+    )
+
+    assert [(w.text, w.start) for w in result.words] == [("да", 2.5), ("нет", 10.1)]
+
+
+def test_progress_is_reported_per_batch(audio) -> None:
+    seen: list[tuple[float, float]] = []
+    chunks = [chunk(0, 0.0, 10.0), chunk(1, 10.0, 20.0), chunk(2, 20.0, 30.0)]
+
+    transcribe_chunks(
+        audio,
+        chunks,
+        FakeAsrModel(),
+        "v3_e2e_rnnt",
+        batch_size=2,
+        on_progress=lambda p, t: seen.append((p, t)),
+    )
+
+    assert seen == [(20.0, 30.0), (30.0, 30.0)]
+
+
+def test_empty_chunk_is_left_out_of_its_batch(audio) -> None:
+    model = FakeAsrModel()
+    chunks = [chunk(0, 2.0, 5.0), chunk(1, 120.0, 130.0), chunk(2, 6.0, 8.0)]
+
+    transcribe_chunks(audio, chunks, model, "v3_e2e_rnnt", batch_size=3)
+
+    assert model.calls == [[3.0, 2.0]]
+
+
+def test_batch_size_must_be_positive(audio) -> None:
+    with pytest.raises(ValueError):
+        transcribe_chunks(audio, [chunk(0, 0.0, 1.0)], FakeAsrModel(), "m", batch_size=0)
+
+
+def test_wrong_number_of_results_is_an_asr_failure(audio) -> None:
+    model = FakeAsrModel(results=[FakeTranscription(text="да", words=[FakeWord("да", 0.0, 0.2)])])
+
+    with pytest.raises(AppError) as exc:
+        transcribe_chunks(audio, [chunk(0, 0.0, 2.0), chunk(1, 3.0, 5.0)], model, "m", batch_size=2)
+
+    assert exc.value.code is ErrorCode.ASR_FAILED

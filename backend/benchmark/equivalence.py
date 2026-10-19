@@ -1,4 +1,4 @@
-"""Check that the Phase 12 speedups leave the result unchanged (TASKS.md T12.1).
+"""Check that the Phase 12 speedups leave the result unchanged (TASKS.md T12.1, T12.2).
 
 Usage, from the repository root, on a run directory prepared by `benchmark.run`:
 
@@ -11,14 +11,17 @@ Every optimization is compared with the code it replaced, on the same audio:
   on an excerpt from the middle of the recording (`--seconds 0` takes all of it). The
   speakers and segments must match exactly. The embeddings are also compared directly,
   on a two-minute excerpt.
+* ASR — one `transcribe()` call per chunk through a temporary WAV, as before T12.2,
+  against batched recognition, on chunks built from the run's `diarization.json`. Text and
+  word timestamps must match exactly.
 
 Embeddings themselves are not bit-identical, and cannot be: the fbank FFT rounds slightly
 differently depending on what else is in the batch. Stock pyannote shows the same effect
 on its own — changing `embedding_batch_size` from 32 to 33 moves embeddings by ~2e-7. The
 check reports the largest difference and fails above `EMBEDDING_TOLERANCE`.
 
-The exit code is non-zero if anything differs. Run it after bumping pyannote.audio: the
-speedup overrides an internal of the pinned version.
+The exit code is non-zero if anything differs. Run it after bumping pyannote.audio or
+GigaAM: both speedups rely on internals of the pinned versions.
 """
 
 import argparse
@@ -29,11 +32,18 @@ import wave
 from pathlib import Path
 from typing import Any
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
+from app.schemas.diarization import DiarizationResult
+from worker.pipeline.asr import build_asr_chunks, transcribe_chunks
 from worker.pipeline.diarization import run_diarization
 from worker.pipeline.embeddings import shared_trunk_embeddings
-from worker.pipeline.models import get_diarization_pipeline, load_diarization_pipeline
+from worker.pipeline.models import (
+    get_asr_model,
+    get_asr_recognizer,
+    get_diarization_pipeline,
+    load_diarization_pipeline,
+)
 
 # Two orders of magnitude above the rounding noise measured on stock pyannote (~2e-7).
 EMBEDDING_TOLERANCE = 1e-5
@@ -119,6 +129,69 @@ def check_diarization(excerpt: Path, stock: Any, optimized: Any) -> bool:
     return identical
 
 
+class TranscribeRecognizer:
+    """The pre-T12.2 path: one `transcribe()` per chunk, through a temporary WAV file."""
+
+    def __init__(self, model: Any, tmp_dir: Path) -> None:
+        self.model = model
+        self.path = tmp_dir / "chunk.wav"
+
+    def __call__(self, pcm_batch: list[bytes], sample_rate: int) -> list[Any]:
+        results = []
+        for pcm in pcm_batch:
+            with wave.open(str(self.path), "wb") as out:
+                out.setnchannels(1)
+                out.setsampwidth(2)
+                out.setframerate(sample_rate)
+                out.writeframes(pcm)
+            results.append(self.model.transcribe(str(self.path), word_timestamps=True))
+        return results
+
+
+def check_asr(run: Path, settings: Settings, limit: int, tmp_dir: Path) -> bool:
+    path = run / "diarization.json"
+    if not path.is_file():
+        raise SystemExit(f"{path} is missing — run benchmark.run first")
+    diarization = DiarizationResult.model_validate_json(path.read_text(encoding="utf-8"))
+    normalized = run / "normalized.wav"
+    with wave.open(str(normalized), "rb") as source:
+        duration = source.getnframes() / source.getframerate()
+    # The same chunk geometry as the worker's ASR stage.
+    chunks = build_asr_chunks(
+        diarization.exclusive or diarization.segments,
+        max_chunk_seconds=settings.max_asr_chunk_seconds,
+        merge_gap_seconds=settings.merge_silence_gap_ms / 1000,
+        total_duration=duration,
+    )
+    if limit > 0:
+        chunks = chunks[:limit]
+
+    started = time.monotonic()
+    expected = transcribe_chunks(
+        normalized, chunks, TranscribeRecognizer(get_asr_model(settings), tmp_dir), "reference"
+    )
+    reference_seconds = time.monotonic() - started
+
+    started = time.monotonic()
+    actual = transcribe_chunks(
+        normalized,
+        chunks,
+        get_asr_recognizer(settings),
+        "reference",
+        batch_size=settings.asr_batch_size,
+    )
+    batched_seconds = time.monotonic() - started
+
+    identical = expected.words == actual.words
+    print(
+        f"asr: {len(chunks)} chunks, {len(expected.words)} words, "
+        f"one by one {reference_seconds:.1f} s, batch {settings.asr_batch_size} "
+        f"{batched_seconds:.1f} s ({reference_seconds / batched_seconds:.2f}x) — "
+        f"{'identical' if identical else 'DIFFERENT'}"
+    )
+    return identical
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", type=Path, required=True, help="a benchmark.run output folder")
@@ -128,6 +201,12 @@ def main() -> None:
         default=120.0,
         help="excerpt length for the diarization checks; 0 means the whole recording",
     )
+    parser.add_argument(
+        "--chunks", type=int, default=0, help="ASR chunks to compare; 0 means all of them"
+    )
+    parser.add_argument(
+        "--only", choices=("diarization", "asr"), default=None, help="run one group of checks"
+    )
     args = parser.parse_args()
 
     configure_logging()
@@ -136,19 +215,21 @@ def main() -> None:
     if not normalized.is_file():
         raise SystemExit(f"{normalized} is missing — run benchmark.run first")
 
-    stock = load_diarization_pipeline(settings, settings.hf_token)
-    optimized = get_diarization_pipeline(settings, settings.hf_token)
-    if getattr(optimized.get_embeddings, "__func__", None) is not shared_trunk_embeddings:
-        # Otherwise stock would be compared with stock and the check would pass empty.
-        raise SystemExit("the worker pipeline fell back to stock embeddings — see logs")
+    results: list[bool] = []
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp = Path(tmp_dir)
-        short = write_excerpt(normalized, EMBEDDING_EXCERPT_SECONDS, tmp / "embeddings.wav")
-        excerpt = write_excerpt(normalized, args.seconds, tmp / "diarization.wav")
-        results = [
-            check_embeddings(short, stock, optimized),
-            check_diarization(excerpt, stock, optimized),
-        ]
+        if args.only in (None, "diarization"):
+            stock = load_diarization_pipeline(settings, settings.hf_token)
+            optimized = get_diarization_pipeline(settings, settings.hf_token)
+            if getattr(optimized.get_embeddings, "__func__", None) is not shared_trunk_embeddings:
+                # Otherwise stock would be compared with stock and the check would pass empty.
+                raise SystemExit("the worker pipeline fell back to stock embeddings — see logs")
+            short = write_excerpt(normalized, EMBEDDING_EXCERPT_SECONDS, tmp / "embeddings.wav")
+            excerpt = write_excerpt(normalized, args.seconds, tmp / "diarization.wav")
+            results.append(check_embeddings(short, stock, optimized))
+            results.append(check_diarization(excerpt, stock, optimized))
+        if args.only in (None, "asr"):
+            results.append(check_asr(args.run, settings, args.chunks, tmp))
     sys.exit(0 if all(results) else 1)
 
 

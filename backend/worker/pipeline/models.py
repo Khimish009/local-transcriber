@@ -18,6 +18,7 @@ from app.services.model_cache import (
     is_asr_model_cached,
     is_model_cached,
 )
+from worker.pipeline.asr import GigaAmBatchRecognizer
 from worker.pipeline.embeddings import install_shared_trunk_embeddings
 
 logger = logging.getLogger(__name__)
@@ -188,6 +189,11 @@ def get_asr_model(settings: Settings) -> Any:
     if settings.asr_model not in _asr_cache:
         _asr_cache[settings.asr_model] = load_asr_model(settings)
     return _asr_cache[settings.asr_model]
+
+
+def get_asr_recognizer(settings: Settings) -> GigaAmBatchRecognizer:
+    """The cached GigaAM model, wrapped for batched recognition (T12.2)."""
+    return GigaAmBatchRecognizer(get_asr_model(settings))
 
 
 def reset_pipeline_cache() -> None:

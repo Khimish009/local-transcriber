@@ -11,7 +11,10 @@ torch==2.11.0+cpu
 torchaudio==2.11.0+cpu
 torchcodec==0.16.0+cpu
 
-pyannote.audio>=4.0,<5.0
+# Exact pin: worker/pipeline/embeddings.py replaces SpeakerDiarization.get_embeddings, an
+# internal of this version (TASKS.md T12.1). After a bump, run `python -m
+# benchmark.equivalence` — it compares the result with stock pyannote.
+pyannote.audio==4.0.7
 
 # GigaAM ASR. PyPI still carries 0.1.0, which predates the v3 models and word-level
 # timestamps and pins torch<=2.5.1 — so the package is installed from the repository at a

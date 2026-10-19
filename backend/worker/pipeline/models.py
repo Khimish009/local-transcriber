@@ -18,6 +18,7 @@ from app.services.model_cache import (
     is_asr_model_cached,
     is_model_cached,
 )
+from worker.pipeline.embeddings import install_shared_trunk_embeddings
 
 logger = logging.getLogger(__name__)
 
@@ -121,9 +122,16 @@ def _from_pretrained(pipeline_cls: Any, hf_token: str | None) -> Any:
 
 
 def get_diarization_pipeline(settings: Settings, hf_token: str | None) -> Any:
-    """Process-wide singleton — the model is never reloaded per job or per chunk."""
+    """Process-wide singleton — the model is never reloaded per job or per chunk.
+
+    The singleton runs speaker embeddings with one ResNet pass per window (T12.1).
+    `load_diarization_pipeline` alone returns stock pyannote, which `benchmark.equivalence`
+    uses as the reference.
+    """
     if DIARIZATION_MODEL not in _pipeline_cache:
-        _pipeline_cache[DIARIZATION_MODEL] = load_diarization_pipeline(settings, hf_token)
+        pipeline = load_diarization_pipeline(settings, hf_token)
+        install_shared_trunk_embeddings(pipeline)
+        _pipeline_cache[DIARIZATION_MODEL] = pipeline
     return _pipeline_cache[DIARIZATION_MODEL]
 
 

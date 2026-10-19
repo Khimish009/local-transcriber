@@ -44,7 +44,16 @@ def recover_orphaned_jobs(redis: Redis) -> list[str]:
         if is_pending_in_queue(redis, job_id):
             continue  # still waiting for a worker — it will run normally
 
-        store.fail(job_id, message=RECOVERY_MESSAGE, error_code=ErrorCode.WORKER_CRASHED)
+        # The crash happened at some unknown moment after the last update, but recovery
+        # only runs at the next worker start — possibly the next morning. The last update
+        # is the latest moment the job is known to have been alive, so the processing time
+        # becomes a lower bound instead of absorbing the whole downtime.
+        store.fail(
+            job_id,
+            message=RECOVERY_MESSAGE,
+            error_code=ErrorCode.WORKER_CRASHED,
+            finished_at=job.updated_at,
+        )
         cancel_job(redis, job_id)
         recovered.append(job_id)
         logger.warning(

@@ -92,7 +92,14 @@ class JobStore:
         progress: int | None = None,
         message: str | None = None,
         error_code: ErrorCode | None = None,
+        finished_at: datetime | None = None,
     ) -> Job:
+        """Apply a change and stamp the timeline.
+
+        `finished_at` overrides the finish stamp of a terminal transition. Only crash
+        recovery needs it: it learns about a crash at the next worker start, which can be
+        hours after the job actually stopped.
+        """
         job = self.require(job_id)
         now = _now()
         if status is not None:
@@ -104,7 +111,7 @@ class JobStore:
             if job.started_at is None and status not in RESTING_STATUSES:
                 job.started_at = now
             if status in TERMINAL_STATUSES:
-                job.finished_at = now
+                job.finished_at = finished_at or now
         if progress is not None:
             job.progress = max(0, min(100, progress))
         if message is not None:
@@ -123,8 +130,20 @@ class JobStore:
         )
         return job
 
-    def fail(self, job_id: str, message: str, error_code: ErrorCode | None = None) -> Job:
-        return self.update(job_id, status=JobStatus.FAILED, error_code=error_code, message=message)
+    def fail(
+        self,
+        job_id: str,
+        message: str,
+        error_code: ErrorCode | None = None,
+        finished_at: datetime | None = None,
+    ) -> Job:
+        return self.update(
+            job_id,
+            status=JobStatus.FAILED,
+            error_code=error_code,
+            message=message,
+            finished_at=finished_at,
+        )
 
     def delete(self, job_id: str) -> None:
         self._redis.delete(job_key(job_id))

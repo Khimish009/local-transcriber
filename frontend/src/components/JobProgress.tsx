@@ -31,19 +31,34 @@ function describeTiming(job: Job, receivedAt: number, now: number): string {
   // so any "×N faster than realtime" shown mid-job would be made up.
   if (!TERMINAL_STATUSES.has(job.status)) return `Идёт ${formatElapsed(spent.seconds)}`;
 
-  const verb = job.status === "FAILED" ? "Остановилась через" : "Расшифровка заняла";
+  const verb =
+    job.error_code === "WORKER_CRASHED"
+      ? // Recovery stamps the last update, not the crash itself: a lower bound.
+        "Остановилась не раньше чем через"
+      : job.status === "FAILED"
+        ? "Остановилась через"
+        : "Расшифровка заняла";
   const note = spent.includesQueue
     ? " — вместе с ожиданием в очереди"
     : compareToRecording(job, spent.seconds);
   return `${verb} ${formatElapsed(spent.seconds)}${note}`;
 }
 
-/** "быстрее записи в 1.7 раза" — states the direction, so the ratio cannot be read backwards. */
+const RATIO_FORMAT = new Intl.NumberFormat("ru-RU", {
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+});
+
+/** "быстрее записи в 1,7 раза" — states the direction, so the ratio cannot be read backwards. */
 function compareToRecording(job: Job, seconds: number): string {
   if (!job.audio || seconds <= 0 || job.status === "FAILED") return "";
   const ratio = job.audio.duration_seconds / seconds;
-  if (ratio >= 1) return ` — быстрее записи в ${ratio.toFixed(1)} раза`;
-  return ` — медленнее записи в ${(1 / ratio).toFixed(1)} раза`;
+  // Rounded once, so the parity check and the printed number cannot disagree.
+  const factor = Math.round((ratio >= 1 ? ratio : 1 / ratio) * 10) / 10;
+  // Near parity both directions would read "в 1,0 раза", which says nothing either way.
+  if (factor <= 1) return " — примерно за длительность записи";
+  const direction = ratio >= 1 ? "быстрее" : "медленнее";
+  return ` — ${direction} записи в ${RATIO_FORMAT.format(factor)} раза`;
 }
 
 export function JobProgress({ jobId, onReset }: Props) {
@@ -53,8 +68,10 @@ export function JobProgress({ jobId, onReset }: Props) {
   const [now, setNow] = useState(() => Date.now());
 
   // The running clock ticks on its own: progress events arrive far too irregularly to
-  // drive it, and a stalled stage would otherwise freeze the elapsed time.
-  const running = job !== null && !TERMINAL_STATUSES.has(job.status);
+  // drive it, and a stalled stage would otherwise freeze the elapsed time. Nothing to tick
+  // while the job is queued: there is no processing time yet, only an empty line.
+  const running =
+    job !== null && job.processing_seconds !== null && !TERMINAL_STATUSES.has(job.status);
   useEffect(() => {
     if (!running) return;
     const id = setInterval(() => setNow(Date.now()), 1000);
@@ -97,6 +114,7 @@ export function JobProgress({ jobId, onReset }: Props) {
     );
   }
 
+  const timing = describeTiming(job, receivedAt, now);
   const failed = job.status === "FAILED";
   const completed = job.status === "COMPLETED";
 
@@ -137,7 +155,7 @@ export function JobProgress({ jobId, onReset }: Props) {
           .join(" · ")}
       </p>
 
-      <p className="muted">{describeTiming(job, receivedAt, now)}</p>
+      {timing && <p className="muted">{timing}</p>}
 
       {!completed && (
         <>

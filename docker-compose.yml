@@ -30,6 +30,7 @@ services:
       timeout: 3s
       retries: 10
       start_period: 5s
+    networks: [internal]
     logging: *logging
     restart: unless-stopped
 
@@ -58,8 +59,26 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
+    # `default` for the published port, `internal` to reach Redis.
+    networks: [default, internal]
     logging: *logging
     restart: unless-stopped
+
+  # One-shot: downloads the model weights the worker is missing, then exits (T13.5). The
+  # worker itself has no internet access. With the weights on disk it is done in a second.
+  models:
+    build:
+      context: ./backend
+      target: worker
+    command: ["python", "-m", "worker.fetch_models"]
+    environment:
+      <<: *backend-env
+      # Downloading needs no GPU, and under the CUDA override this service gets none.
+      DEVICE: cpu
+      HF_TOKEN: ${HF_TOKEN:-}
+    volumes:
+      - ./models:/models
+    logging: *logging
 
   worker:
     build:
@@ -79,17 +98,22 @@ services:
     volumes:
       - ./data:/data
       - ./models:/models
+    # No route to the internet: whatever the ML libraries try to send cannot leave (T13.5).
+    networks: [internal]
     depends_on:
       redis:
         condition: service_healthy
+      # Exits 0 even when a download failed: the worker still starts, and jobs needing the
+      # missing model fail with its stable error code.
+      models:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-m", "worker.healthcheck"]
       interval: 10s
       timeout: 5s
       retries: 5
-      # Generous: the worker loads both ML models before it starts accepting jobs, and on
-      # a fresh install that includes downloading ~460 MB of weights.
-      start_period: 600s
+      # The worker loads both ML models from disk before it starts accepting jobs.
+      start_period: 120s
     logging: *logging
     restart: unless-stopped
 
@@ -112,6 +136,12 @@ services:
       start_period: 15s
     logging: *logging
     restart: unless-stopped
+
+networks:
+  # No route out of the machine. The worker processes the recordings, and Redis holds the
+  # jobs; neither needs the internet once the weights are on disk.
+  internal:
+    internal: true
 
 volumes:
   redis-data:

@@ -13,7 +13,7 @@ BACKEND = Path(__file__).resolve().parents[1]
 
 PROBE = """
 import sys
-import worker.main, benchmark.run, benchmark.equivalence
+import worker.main, worker.fetch_models, benchmark.run, benchmark.equivalence
 heavy = sorted({"torch", "numpy", "pyannote", "gigaam"} & set(sys.modules))
 assert not heavy, heavy
 """

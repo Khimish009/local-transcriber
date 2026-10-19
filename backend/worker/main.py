@@ -72,8 +72,8 @@ def warm_up_models(settings: Settings) -> None:
 
     A failure here is not fatal: the job that needs the model fails with a stable error
     code, and the worker keeps serving the queue. Each model is tried on its own — a missing
-    HF_TOKEN must not leave GigaAM cold. On a fresh install this is also when the weights
-    are downloaded, before the worker registers in Redis.
+    HF_TOKEN must not leave GigaAM cold. The weights are read from disk: the worker has no
+    internet access, and the `models` service downloads them before it starts (T13.5).
     """
     from worker.pipeline.models import get_asr_model, get_diarization_pipeline
 

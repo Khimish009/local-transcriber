@@ -76,13 +76,14 @@ def check_models(settings: Settings) -> ModelsHealth:
     missing: list[str] = []
     if not is_model_cached(settings, DIARIZATION_MODEL):
         missing.append(
-            f"{DIARIZATION_MODEL} is not downloaded yet — set HF_TOKEN and accept the "
-            "model terms on Hugging Face"
+            f"{DIARIZATION_MODEL} is not downloaded yet — set HF_TOKEN, accept the model "
+            "terms on Hugging Face and run `docker compose up` with internet access"
         )
     if not is_asr_model_cached(settings):
+        # The worker has no internet access (T13.5): only the `models` service downloads.
         missing.append(
-            f"GigaAM '{settings.asr_model}' is not downloaded yet — the worker fetches it "
-            "when it starts"
+            f"GigaAM '{settings.asr_model}' is not downloaded yet — the `models` service "
+            "fetches it at `docker compose up`"
         )
 
     if missing:

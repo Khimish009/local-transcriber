@@ -14,6 +14,8 @@ const POLL_FALLBACK_MS = 2000;
 
 export interface JobState {
   job: Job | null;
+  /** Browser-clock moment the current `job` arrived; anchors the running-time counter. */
+  receivedAt: number;
   error: string | null;
   /** True while SSE is unavailable and the UI falls back to polling. */
   degraded: boolean;
@@ -22,6 +24,7 @@ export interface JobState {
 /** Follows a job through SSE, falling back to polling if the stream drops. */
 export function useJob(jobId: string | null): JobState {
   const [job, setJob] = useState<Job | null>(null);
+  const [receivedAt, setReceivedAt] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [degraded, setDegraded] = useState(false);
 
@@ -47,6 +50,7 @@ export function useJob(jobId: string | null): JobState {
 
     const apply = (next: Job) => {
       setJob(next);
+      setReceivedAt(Date.now());
       setError(null);
       if (TERMINAL_STATUSES.has(next.status)) {
         finish();
@@ -91,5 +95,5 @@ export function useJob(jobId: string | null): JobState {
     return finish;
   }, [jobId]);
 
-  return { job, error, degraded };
+  return { job, receivedAt, error, degraded };
 }

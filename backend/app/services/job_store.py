@@ -6,7 +6,14 @@ from datetime import UTC, datetime
 from redis import Redis
 
 from app.core.errors import AppError, ErrorCode
-from app.schemas.job import RESTING_STATUSES, TERMINAL_STATUSES, Job, JobSource, JobStatus
+from app.schemas.job import (
+    DERIVED_FIELDS,
+    RESTING_STATUSES,
+    TERMINAL_STATUSES,
+    Job,
+    JobSource,
+    JobStatus,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -149,10 +156,11 @@ class JobStore:
         self._redis.delete(job_key(job_id))
 
     def _persist(self, job: Job) -> None:
-        payload = job.model_dump_json()
-        self._redis.set(job_key(job.job_id), payload)
+        # Derived fields are not stored: a running job's processing time would be stale the
+        # moment it is written. They are recomputed on every read.
+        self._redis.set(job_key(job.job_id), job.model_dump_json(exclude=DERIVED_FIELDS))
         # Best-effort notification for SSE subscribers; polling remains the fallback.
-        self._redis.publish(events_channel(job.job_id), payload)
+        self._redis.publish(events_channel(job.job_id), job.model_dump_json())
 
 
 def get_job_store(redis: Redis) -> JobStore:

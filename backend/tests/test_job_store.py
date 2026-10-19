@@ -1,3 +1,6 @@
+import json
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from app.core.errors import AppError, ErrorCode
@@ -99,7 +102,10 @@ def test_first_processing_stage_stamps_the_start(store) -> None:
 
     assert started.started_at is not None
     assert started.finished_at is None
-    assert started.processing_seconds is None, "still running"
+    # Still running: measured up to now on the server clock.
+    assert started.processing_seconds is not None
+    assert started.processing_seconds >= 0
+    assert started.processing_includes_queue is False
 
 
 def test_start_is_stamped_once_and_never_moves(store) -> None:
@@ -141,3 +147,44 @@ def test_job_that_never_started_has_no_duration(store) -> None:
     assert failed.started_at is None
     assert failed.finished_at is not None
     assert failed.processing_seconds is None
+
+
+def test_running_job_is_measured_against_the_server_clock(store) -> None:
+    job = store.create(JobSource(filename="meeting.wav", size_bytes=10))
+    running = store.update(job.job_id, status=JobStatus.TRANSCRIBING)
+    running.started_at = datetime.now(UTC) - timedelta(minutes=5)
+
+    assert running.processing_seconds == pytest.approx(300, abs=5)
+
+
+def test_queued_job_has_no_duration(store) -> None:
+    job = store.create(JobSource(filename="meeting.wav", size_bytes=10))
+
+    assert job.processing_seconds is None
+    assert job.processing_includes_queue is False
+
+
+def test_legacy_record_falls_back_to_created_to_updated_and_says_so(store) -> None:
+    """Records written before started_at/finished_at existed have neither."""
+    job = store.create(JobSource(filename="meeting.wav", size_bytes=10))
+    legacy = job.model_copy(
+        update={
+            "status": JobStatus.COMPLETED,
+            "updated_at": job.created_at + timedelta(minutes=25),
+        }
+    )
+
+    assert legacy.processing_seconds == 25 * 60
+    assert legacy.processing_includes_queue is True
+
+
+def test_derived_fields_are_served_but_not_stored(store, redis) -> None:
+    job = store.create(JobSource(filename="meeting.wav", size_bytes=10))
+    store.update(job.job_id, status=JobStatus.DIARIZING)
+
+    stored = json.loads(redis.get(job_key(job.job_id)))
+    served = json.loads(store.require(job.job_id).model_dump_json())
+
+    assert "processing_seconds" not in stored
+    assert "processing_seconds" in served
+    assert "processing_includes_queue" in served

@@ -1,7 +1,7 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 from app.core.errors import ErrorCode
 from app.schemas.audio import AudioMetadata
@@ -67,15 +67,38 @@ class Job(BaseModel):
     def is_terminal(self) -> bool:
         return self.status in TERMINAL_STATUSES
 
+    # Processing time is computed here, once, and shipped with every serialization, so the
+    # UI never re-derives it. Running jobs are measured against the server clock: the
+    # browser only adds the time elapsed since it received the record, which keeps a skewed
+    # client clock out of the figure. See docs/processing-time.md.
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def processing_seconds(self) -> float | None:
-        """How long the worker spent on this job, excluding time spent queued.
+        """Seconds the worker has spent on the job so far, or None when unknown."""
+        return self._processing_time()[0]
 
-        None while the job is still running, and for jobs that failed before they started.
-        """
-        if self.started_at is None or self.finished_at is None:
-            return None
-        return (self.finished_at - self.started_at).total_seconds()
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def processing_includes_queue(self) -> bool:
+        """True when `processing_seconds` is a legacy estimate that includes queue time."""
+        return self._processing_time()[1]
+
+    def _processing_time(self) -> tuple[float | None, bool]:
+        if self.started_at is not None:
+            end = self.finished_at or datetime.now(UTC)
+            return max(0.0, (end - self.started_at).total_seconds()), False
+        if self.finished_at is not None:
+            return None, False  # failed while still queued: the worker never touched it
+        if self.is_terminal:
+            # Written before the timestamps existed: created → updated is the only span
+            # left, and it also covers upload and time spent waiting in the queue.
+            seconds = (self.updated_at - self.created_at).total_seconds()
+            return (seconds, True) if seconds > 0 else (None, False)
+        return None, False  # queued, not picked up yet
+
+
+# Computed on serialization, never stored in Redis.
+DERIVED_FIELDS = frozenset({"processing_seconds", "processing_includes_queue"})
 
 
 class JobCreatedResponse(BaseModel):

@@ -8,7 +8,6 @@ import {
   ApiError,
   deleteJob,
   describeError,
-  elapsedTime,
   formatBytes,
   formatDuration,
   formatElapsed,
@@ -24,20 +23,19 @@ interface Props {
 }
 
 /** One line about time: how long it is taking, or how long it took. */
-function describeTiming(job: Job, now: number): string {
+function describeTiming(job: Job, receivedAt: number, now: number): string {
+  const spent = processingTime(job, { receivedAt, now });
+  if (spent === null) return "";
+
   // No speed estimate while it runs: progress is not linear in audio time across stages,
   // so any "×N faster than realtime" shown mid-job would be made up.
-  const running = elapsedTime(job, now);
-  if (running !== null) return `Идёт ${formatElapsed(running)}`;
-
-  const done = processingTime(job);
-  if (done === null) return "";
+  if (!TERMINAL_STATUSES.has(job.status)) return `Идёт ${formatElapsed(spent.seconds)}`;
 
   const verb = job.status === "FAILED" ? "Остановилась через" : "Расшифровка заняла";
-  const note = done.exact
-    ? compareToRecording(job, done.seconds)
-    : " — вместе с ожиданием в очереди";
-  return `${verb} ${formatElapsed(done.seconds)}${note}`;
+  const note = spent.includesQueue
+    ? " — вместе с ожиданием в очереди"
+    : compareToRecording(job, spent.seconds);
+  return `${verb} ${formatElapsed(spent.seconds)}${note}`;
 }
 
 /** "быстрее записи в 1.7 раза" — states the direction, so the ratio cannot be read backwards. */
@@ -49,7 +47,7 @@ function compareToRecording(job: Job, seconds: number): string {
 }
 
 export function JobProgress({ jobId, onReset }: Props) {
-  const { job, error, degraded } = useJob(jobId);
+  const { job, receivedAt, error, degraded } = useJob(jobId);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -139,7 +137,7 @@ export function JobProgress({ jobId, onReset }: Props) {
           .join(" · ")}
       </p>
 
-      <p className="muted">{describeTiming(job, now)}</p>
+      <p className="muted">{describeTiming(job, receivedAt, now)}</p>
 
       {!completed && (
         <>

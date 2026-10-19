@@ -56,6 +56,13 @@ export interface Job {
   /** Null until the worker picks the job up; null for records written before this existed. */
   started_at: string | null;
   finished_at: string | null;
+  /**
+   * Computed by the server at the moment it sent the record — up to now for a running job.
+   * Null when unknown (queued, or failed before the worker picked it up).
+   */
+  processing_seconds: number | null;
+  /** The figure is a legacy created → updated span that also covers queue time. */
+  processing_includes_queue: boolean;
 }
 
 export const TERMINAL_STATUSES: ReadonlySet<JobStatus> = new Set<JobStatus>([
@@ -202,26 +209,28 @@ export function formatBytes(bytes: number): string {
   return `${value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`;
 }
 
-/**
- * Seconds the worker spent on the job, or null when that cannot be known.
- *
- * Falls back to `created_at → updated_at` for jobs recorded before the timestamps existed;
- * that span also includes the time the job waited in the queue, hence `exact`.
- */
-export function processingTime(job: Job): { seconds: number; exact: boolean } | null {
-  if (job.started_at && job.finished_at) {
-    const seconds = (Date.parse(job.finished_at) - Date.parse(job.started_at)) / 1000;
-    return { seconds, exact: true };
-  }
-  if (!TERMINAL_STATUSES.has(job.status)) return null;
-  const seconds = (Date.parse(job.updated_at) - Date.parse(job.created_at)) / 1000;
-  return seconds > 0 ? { seconds, exact: false } : null;
+export interface ProcessingTime {
+  seconds: number;
+  /** Also covers upload and time spent waiting in the queue: an old record, no exact stamps. */
+  includesQueue: boolean;
 }
 
-/** How long the job has been running, for a job that has started but not finished. */
-export function elapsedTime(job: Job, now: number): number | null {
-  if (!job.started_at || TERMINAL_STATUSES.has(job.status)) return null;
-  return (now - Date.parse(job.started_at)) / 1000;
+/**
+ * Processing time as shown to the user (docs/processing-time.md).
+ *
+ * The server does the arithmetic. For a running job its figure is "up to the moment the
+ * record was sent", so the time since `receivedAt` is added on top. Both of those are
+ * browser-clock readings, so a skew between the browser and the server cancels out.
+ * Without `clock`, a running job's figure is returned as the server sent it.
+ */
+export function processingTime(
+  job: Job,
+  clock?: { receivedAt: number; now: number },
+): ProcessingTime | null {
+  if (job.processing_seconds === null) return null;
+  const running = !TERMINAL_STATUSES.has(job.status);
+  const extra = running && clock ? Math.max(0, clock.now - clock.receivedAt) / 1000 : 0;
+  return { seconds: job.processing_seconds + extra, includesQueue: job.processing_includes_queue };
 }
 
 /** "2 ч 14 мин" / "3 мин 20 с" / "45 с" — a wall-clock span, not a media position. */

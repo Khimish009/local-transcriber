@@ -139,3 +139,16 @@ def test_list_skips_a_record_it_cannot_parse(client, redis) -> None:
     redis.set("job:broken", b"{not json}")
 
     assert [job["job_id"] for job in client.get("/api/v1/jobs").json()] == [job_id]
+
+
+def test_job_carries_processing_time_computed_on_the_server(client, store) -> None:
+    """The UI does not re-derive processing time; the API ships it (docs/processing-time.md)."""
+    job_id = _upload(client).json()["job_id"]
+    store.update(job_id, status=JobStatus.DIARIZING)
+
+    job = client.get(f"/api/v1/jobs/{job_id}").json()
+    listed = client.get("/api/v1/jobs").json()[0]
+
+    assert job["processing_seconds"] >= 0
+    assert job["processing_includes_queue"] is False
+    assert "processing_seconds" in listed

@@ -288,6 +288,10 @@ Fields:
 - `file`
 - `speaker_count` optional
 
+The body is parsed as it arrives and the file is written straight into the job folder. A
+file over `MAX_UPLOAD_MB` gets `413 FILE_TOO_LARGE` — before the body is read when
+`Content-Length` already exceeds the limit, otherwise as soon as the file outgrows it.
+
 Response:
 
 ```json

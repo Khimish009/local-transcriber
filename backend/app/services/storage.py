@@ -1,7 +1,6 @@
 import re
 import unicodedata
 import uuid
-from collections.abc import AsyncIterator
 from pathlib import Path
 
 from app.core.errors import AppError, ErrorCode
@@ -88,33 +87,3 @@ class JobStorage:
         if not source_dir.is_dir():
             return None
         return next((path for path in sorted(source_dir.iterdir()) if path.is_file()), None)
-
-    async def save_stream(
-        self,
-        chunks: AsyncIterator[bytes],
-        destination: Path,
-        max_bytes: int,
-    ) -> int:
-        """Stream an upload to disk without buffering it in memory.
-
-        Raises FILE_TOO_LARGE as soon as the limit is exceeded and removes the partial file.
-        """
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        written = 0
-        try:
-            with destination.open("wb") as handle:
-                async for chunk in chunks:
-                    if not chunk:
-                        continue
-                    written += len(chunk)
-                    if written > max_bytes:
-                        raise AppError(
-                            ErrorCode.FILE_TOO_LARGE,
-                            f"File exceeds the {max_bytes // (1024 * 1024)} MB limit",
-                            status_code=413,
-                        )
-                    handle.write(chunk)
-        except BaseException:
-            destination.unlink(missing_ok=True)
-            raise
-        return written

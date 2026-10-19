@@ -89,7 +89,7 @@ Generate TXT / DOCX / PDF
 Работает:
 - `docker compose up --build` поднимает `frontend`, `api`, `worker`, `redis`, у всех есть healthchecks; перед worker одноразовый сервис `models` докачивает недостающие веса и завершается;
 - `GET /api/v1/health` — статус API, Redis, worker, лимитов загрузки и реального наличия весов моделей;
-- `POST /api/v1/jobs`, `GET /api/v1/jobs/{job_id}`, SSE `GET /api/v1/jobs/{job_id}/events`;
+- `POST /api/v1/jobs`, `GET /api/v1/jobs/{job_id}`, SSE `GET /api/v1/jobs/{job_id}/events`; загрузка пишется на диск один раз, сразу в папку задачи, а файл больше `MAX_UPLOAD_MB` отклоняется по `Content-Length` до передачи тела;
 - `GET /api/v1/jobs` — список задач, новые сверху;
 - `GET /api/v1/jobs/{job_id}/transcript` — канонический результат; `GET .../audio` — исходная запись с поддержкой Range для перемотки; `PATCH .../speakers` — переименование; `GET .../download/{json|txt|docx|pdf}` — скачивание; `DELETE /api/v1/jobs/{job_id}` — удаление задачи вместе с файлами;
 - FFmpeg-стадия: метаданные исходника + `work/normalized.wav` (WAV / mono / 16 kHz / PCM s16le), оригинал не изменяется;

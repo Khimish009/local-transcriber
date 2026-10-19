@@ -48,32 +48,6 @@ def test_validate_job_id_rejects_path_traversal() -> None:
     assert exc.value.status_code == 404
 
 
-async def _chunks(*parts: bytes):
-    for part in parts:
-        yield part
-
-
-@pytest.mark.asyncio
-async def test_save_stream_writes_file(storage, tmp_path) -> None:
-    destination = tmp_path / "out" / "original.wav"
-
-    size = await storage.save_stream(_chunks(b"abc", b"de"), destination, max_bytes=100)
-
-    assert size == 5
-    assert destination.read_bytes() == b"abcde"
-
-
-@pytest.mark.asyncio
-async def test_save_stream_enforces_limit_and_removes_partial(storage, tmp_path) -> None:
-    destination = tmp_path / "out" / "original.wav"
-
-    with pytest.raises(AppError) as exc:
-        await storage.save_stream(_chunks(b"a" * 10, b"b" * 10), destination, max_bytes=15)
-
-    assert exc.value.code is ErrorCode.FILE_TOO_LARGE
-    assert not destination.exists()
-
-
 def test_job_dirs_layout(storage) -> None:
     job_id = "11111111-1111-1111-1111-111111111111"
 
